@@ -20,7 +20,7 @@ if grep -q "ghcr.io" ~/.docker/config.json 2>/dev/null; then
 else
   step "Authenticating with GHCR"
   echo "  Enter a GitHub PAT with read:packages scope:"
-  docker login ghcr.io -u Sign0ret
+  docker login ghcr.io -u sign0ret
 fi
 
 # ── 3. Directory layout ───────────────────────────────
@@ -35,7 +35,7 @@ else
   cat > "$COMPOSE_FILE" <<'COMPOSE'
 services:
   orchestrator:
-    image: ghcr.io/Sign0ret/camaron-orchestrator:latest
+    image: ghcr.io/sign0ret/camaron-orchestrator:latest
     ports:
       - "8080:8080"
     volumes:
