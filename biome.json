@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": [".next", ".turbo", "node_modules", "dist", "out", "build"]
+    "ignore": [".next", ".turbo", "node_modules", "dist", "out", "build", "services"]
   },
   "formatter": {
     "enabled": true,
