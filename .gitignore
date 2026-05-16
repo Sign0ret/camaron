@@ -27,6 +27,7 @@ out/
 build
 dist
 bin/
+orchestrator
 
 
 # Debug
