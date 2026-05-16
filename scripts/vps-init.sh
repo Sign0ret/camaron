@@ -24,10 +24,10 @@ else
 fi
 
 # ── 3. Directory layout ───────────────────────────────
-mkdir -p /opt/reci /data/reci /tmp/chunks
+mkdir -p /opt/camaron /data/camaron /tmp/chunks
 
 # ── 4. Compose file (first-run only) ──────────────────
-COMPOSE_FILE=/opt/reci/docker-compose.yml
+COMPOSE_FILE=/opt/camaron/docker-compose.yml
 if [ -f "$COMPOSE_FILE" ]; then
   skip "$COMPOSE_FILE exists (skipping overwrite)"
 else
@@ -35,11 +35,11 @@ else
   cat > "$COMPOSE_FILE" <<'COMPOSE'
 services:
   orchestrator:
-    image: ghcr.io/Sign0ret/reci-orchestrator:latest
+    image: ghcr.io/Sign0ret/camaron-orchestrator:latest
     ports:
       - "8080:8080"
     volumes:
-      - /data/reci:/data/reci
+      - /data/camaron:/data/camaron
       - /tmp/chunks:/tmp/chunks
     restart: always
 
@@ -57,11 +57,11 @@ fi
 
 # ── 5. Start services ─────────────────────────────────
 step "Starting services..."
-cd /opt/reci && docker compose up -d
+cd /opt/camaron && docker compose up -d
 
 # ── 6. Firewall ────────────────────────────────────────
 if command -v ufw &>/dev/null; then
-  ufw allow 8080/tcp comment 'reci-orchestrator' 2>/dev/null || true
+  ufw allow 8080/tcp comment 'camaron-orchestrator' 2>/dev/null || true
   ufw status | grep -q "Status: active" || { step "Enabling firewall..."; ufw --force enable; }
 fi
 
