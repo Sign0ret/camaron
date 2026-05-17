@@ -26,7 +26,27 @@ fi
 # ── 3. Directory layout ───────────────────────────────
 mkdir -p /opt/camaron /data/camaron /tmp/chunks
 
-# ── 4. Compose file (first-run only) ──────────────────
+# ── 4. Deployment script ────────────────────────────────
+DEPLOY_SCRIPT=/opt/camaron/deploy.sh
+if [ -f /root/deploy.sh ]; then
+  cp /root/deploy.sh "$DEPLOY_SCRIPT" && step "deploy.sh copied to $DEPLOY_SCRIPT"
+elif [ -f "$DEPLOY_SCRIPT" ]; then
+  skip "$DEPLOY_SCRIPT already exists"
+else
+  echo -e "  ${red}⚠ /root/deploy.sh not found — deploy script missing${nc}"
+fi
+
+# ── 5. Environment file ────────────────────────────────
+ENV_FILE=/opt/camaron/.env
+if [ -f /root/.env ]; then
+  cp /root/.env "$ENV_FILE" && step ".env copied to $ENV_FILE"
+elif [ -f "$ENV_FILE" ]; then
+  skip "$ENV_FILE already exists"
+else
+  echo -e "  ${red}⚠ /root/.env not found — starting without env file${nc}"
+fi
+
+# ── 6. Compose file (first-run only) ──────────────────
 COMPOSE_FILE=/opt/camaron/docker-compose.yml
 if [ -f "$COMPOSE_FILE" ]; then
   skip "$COMPOSE_FILE exists (skipping overwrite)"
@@ -41,31 +61,28 @@ services:
     volumes:
       - /data/camaron:/data/camaron
       - /tmp/chunks:/tmp/chunks
-    restart: always
-
-  watchtower:
-    image: containrrr/watchtower:latest
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      WATCHTOWER_POLL_INTERVAL: 300
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_INCLUDE_SELF: "true"
+    env_file: /opt/camaron/.env
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     restart: always
 COMPOSE
 fi
 
-# ── 5. Start services ─────────────────────────────────
+# ── 7. Start services ─────────────────────────────────
 step "Starting services..."
 cd /opt/camaron && docker compose up -d
 
-# ── 6. Firewall ────────────────────────────────────────
+# ── 8. Firewall ────────────────────────────────────────
 if command -v ufw &>/dev/null; then
   ufw allow 8080/tcp comment 'camaron-orchestrator' 2>/dev/null || true
   ufw status | grep -q "Status: active" || { step "Enabling firewall..."; ufw --force enable; }
 fi
 
-# ── 7. Report ──────────────────────────────────────────
+# ── 9. Report ──────────────────────────────────────────
 echo ""
 echo -e "${green}✓ VPS ready${nc}"
 echo "  Health:  http://$(hostname -I | awk '{print $1}'):8080/health"
