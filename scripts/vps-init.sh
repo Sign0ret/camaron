@@ -43,7 +43,8 @@ if [ -f /root/.env ]; then
 elif [ -f "$ENV_FILE" ]; then
   skip "$ENV_FILE already exists"
 else
-  echo -e "  ${red}⚠ /root/.env not found — starting without env file${nc}"
+  step "Creating empty $ENV_FILE"
+  echo "# camaron environment variables" > "$ENV_FILE"
 fi
 
 # ── 6. Compose file (first-run only) ──────────────────
