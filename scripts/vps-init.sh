@@ -79,6 +79,7 @@ cd /opt/camaron && docker compose up -d
 
 # ── 8. Firewall ────────────────────────────────────────
 if command -v ufw &>/dev/null; then
+  ufw allow 22/tcp comment 'ssh' 2>/dev/null || true
   ufw allow 8080/tcp comment 'camaron-orchestrator' 2>/dev/null || true
   ufw status | grep -q "Status: active" || { step "Enabling firewall..."; ufw --force enable; }
 fi
