@@ -3,11 +3,12 @@ package ingest
 import "log"
 
 type CameraStatus struct {
-	ID           string `json:"id"`
-	URL          string `json:"url"`
-	Running      bool   `json:"running"`
-	FramesIn     uint64 `json:"frames_in"`
-	FramesDropped uint64 `json:"frames_dropped"`
+	ID              string `json:"id"`
+	URL             string `json:"url"`
+	Running         bool   `json:"running"`
+	FramesIn        uint64 `json:"frames_in"`
+	FramesThrottled uint64 `json:"frames_throttled"`
+	FramesDropped   uint64 `json:"frames_dropped"`
 }
 
 type Camera struct {
@@ -49,17 +50,19 @@ func (c *Camera) Stop() {
 
 func (c *Camera) Status() CameraStatus {
 	running := c.client != nil
-	var framesIn, framesDropped uint64
+	var framesIn, framesThrottled, framesDropped uint64
 	if c.client != nil {
 		framesIn = c.client.FramesReceived()
+		framesThrottled = c.client.FramesThrottled()
 		framesDropped = c.client.FramesDropped()
 	}
 	return CameraStatus{
-		ID:            c.id,
-		URL:           c.url,
-		Running:       running,
-		FramesIn:      framesIn,
-		FramesDropped: framesDropped,
+		ID:              c.id,
+		URL:             c.url,
+		Running:         running,
+		FramesIn:        framesIn,
+		FramesThrottled: framesThrottled,
+		FramesDropped:   framesDropped,
 	}
 }
 

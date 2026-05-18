@@ -13,3 +13,12 @@ services:
     image: bluenviron/mediamtx:latest
     ports:
       - "8554:8554"
+
+  ffmpeg:
+    image: jrottenberg/ffmpeg:latest
+    command: >
+      -re -f lavfi -i testsrc2=size=640x480:rate=30
+      -c:v libx264 -preset ultrafast -tune zerolatency
+      -f rtsp rtsp://mediamtx:8554/test
+    depends_on:
+      - mediamtx

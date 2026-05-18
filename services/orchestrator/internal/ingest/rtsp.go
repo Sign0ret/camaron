@@ -3,6 +3,7 @@ package ingest
 import (
 	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/bluenviron/gortsplib/v5"
@@ -13,14 +14,17 @@ import (
 )
 
 type RTSPClient struct {
-	urlStr string
-	camera string
-	client *gortsplib.Client
-	frames uint64
-	drops  uint64
-	stopCh chan struct{}
-	doneCh chan struct{}
-	outCh  chan Frame
+	urlStr    string
+	camera    string
+	client    *gortsplib.Client
+	frames    atomic.Uint64
+	drops     atomic.Uint64
+	throttled atomic.Uint64
+	fpsLimit  int
+	lastSent  time.Time
+	stopCh    chan struct{}
+	doneCh    chan struct{}
+	outCh     chan Frame
 }
 
 func NewRTSPClient(cameraID, rtspURL string, out chan Frame) (*RTSPClient, error) {
@@ -29,11 +33,12 @@ func NewRTSPClient(cameraID, rtspURL string, out chan Frame) (*RTSPClient, error
 		return nil, fmt.Errorf("invalid RTSP URL: %w", err)
 	}
 	return &RTSPClient{
-		urlStr: rtspURL,
-		camera: cameraID,
-		stopCh: make(chan struct{}),
-		doneCh: make(chan struct{}),
-		outCh:  out,
+		urlStr:   rtspURL,
+		camera:   cameraID,
+		fpsLimit: 5,
+		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
+		outCh:    out,
 	}, nil
 }
 
@@ -84,14 +89,20 @@ func (c *RTSPClient) Run() error {
 			Type:      frameType,
 		}
 
-		c.frames++
+		c.frames.Add(1)
+
+		if time.Since(c.lastSent) < time.Second/time.Duration(c.fpsLimit) {
+			c.throttled.Add(1)
+			return
+		}
+		c.lastSent = time.Now()
 
 		select {
 		case c.outCh <- f:
 		default:
 			select {
 			case <-c.outCh:
-				c.drops++
+				c.drops.Add(1)
 			default:
 			}
 			c.outCh <- f
@@ -115,7 +126,7 @@ func (c *RTSPClient) Run() error {
 	for {
 		select {
 		case <-ticker.C:
-			log.Printf("[%s] rtsp: %d frames, %d dropped", c.camera, c.frames, c.drops)
+			log.Printf("[%s] rtsp: %d frames, %d throttled, %d dropped", c.camera, c.frames.Load(), c.throttled.Load(), c.drops.Load())
 		case <-c.doneCh:
 			return nil
 		}
@@ -131,6 +142,8 @@ func (c *RTSPClient) Stop() {
 	close(c.doneCh)
 }
 
-func (c *RTSPClient) FramesReceived() uint64 { return c.frames }
+func (c *RTSPClient) FramesReceived() uint64  { return c.frames.Load() }
 
-func (c *RTSPClient) FramesDropped() uint64 { return c.drops }
+func (c *RTSPClient) FramesDropped() uint64   { return c.drops.Load() }
+
+func (c *RTSPClient) FramesThrottled() uint64 { return c.throttled.Load() }
