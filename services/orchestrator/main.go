@@ -10,28 +10,52 @@ import (
 	"syscall"
 
 	"github.com/Sign0ret/camaron/services/orchestrator/internal"
+	"github.com/Sign0ret/camaron/services/orchestrator/internal/config"
+	"github.com/Sign0ret/camaron/services/orchestrator/internal/uploader"
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
 	}
 
-	manager := internal.NewCameraManager()
+	if len(cfg.Cameras) == 0 {
+		log.Println("no cameras configured")
+	}
 
-	cameraURLs := os.Getenv("CAMERA_URLS")
-	if cameraURLs != "" {
-		for _, entry := range strings.Split(cameraURLs, ",") {
-			parts := strings.SplitN(entry, "=", 2)
-			if len(parts) != 2 {
-				log.Printf("invalid camera entry: %s", entry)
-				continue
-			}
-			id, url := parts[0], parts[1]
-			if err := manager.AddCamera(id, url); err != nil {
-				log.Printf("failed to add camera %s: %v", id, err)
-			}
+	upl, err := uploader.NewUploader(uploader.Config{
+		Endpoint:     cfg.S3Endpoint,
+		Bucket:       cfg.S3Bucket,
+		AccessKeyID:  cfg.S3AccessKeyID,
+		SecretKey:    cfg.S3SecretKey,
+		Region:       cfg.S3Region,
+		UsePathStyle: cfg.S3UsePathStyle,
+		Workers:      cfg.S3Workers,
+		QueueSize:    cfg.S3QueueSize,
+		RecordingDir: cfg.RecordingDir,
+	})
+	if err != nil {
+		log.Printf("uploader: init failed: %v (uploads disabled)", err)
+		upl = nil
+	}
+
+	var uploadCh chan<- string
+	if upl != nil {
+		if err := upl.Start(); err != nil {
+			log.Printf("uploader: start failed: %v (uploads disabled)", err)
+			upl = nil
+		} else {
+			uploadCh = upl.Channel()
+			defer upl.Stop()
+		}
+	}
+
+	manager := internal.NewCameraManager(cfg, uploadCh)
+
+	for _, cam := range cfg.Cameras {
+		if err := manager.AddCamera(cam.ID, cam.URL); err != nil {
+			log.Printf("failed to add camera %s: %v", cam.ID, err)
 		}
 	}
 
@@ -67,8 +91,8 @@ func main() {
 	})
 
 	go func() {
-		log.Printf("orchestrator listening on :%s", port)
-		if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Printf("orchestrator listening on :%s", cfg.Port)
+		if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
