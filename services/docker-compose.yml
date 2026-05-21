@@ -6,13 +6,35 @@ services:
       - "8080:8080"
     environment:
       - CAMERA_URLS=test=rtsp://mediamtx:8554/test
+      - S3_ENDPOINT=http://minio:9000
+      - S3_BUCKET=camaron
+      - S3_ACCESS_KEY_ID=minioadmin
+      - S3_SECRET_ACCESS_KEY=minioadmin
+      - S3_REGION=us-east-1
+      - S3_USE_PATH_STYLE=true
+      - RECORDING_DIR=/tmp/camaron/recordings
     depends_on:
       - mediamtx
+      - minio
+    volumes:
+      - recordings:/tmp/camaron/recordings
 
   mediamtx:
     image: bluenviron/mediamtx:latest
     ports:
       - "8554:8554"
+
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address :9001
+    volumes:
+      - minio_data:/data
 
   ffmpeg:
     image: jrottenberg/ffmpeg:latest
@@ -22,3 +44,7 @@ services:
       -f rtsp rtsp://mediamtx:8554/test
     depends_on:
       - mediamtx
+
+volumes:
+  minio_data:
+  recordings:

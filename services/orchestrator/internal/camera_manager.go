@@ -5,17 +5,23 @@ import (
 	"log"
 	"sync"
 
+	"github.com/Sign0ret/camaron/services/orchestrator/internal/config"
 	"github.com/Sign0ret/camaron/services/orchestrator/internal/ingest"
+	"github.com/Sign0ret/camaron/services/orchestrator/internal/recorder"
 )
 
 type CameraManager struct {
-	mu      sync.RWMutex
-	cameras map[string]*ingest.Camera
+	mu       sync.RWMutex
+	cameras  map[string]*ingest.Camera
+	cfg      *config.Config
+	uploadCh chan<- string
 }
 
-func NewCameraManager() *CameraManager {
+func NewCameraManager(cfg *config.Config, uploadCh chan<- string) *CameraManager {
 	return &CameraManager{
-		cameras: make(map[string]*ingest.Camera),
+		cameras:  make(map[string]*ingest.Camera),
+		cfg:      cfg,
+		uploadCh: uploadCh,
 	}
 }
 
@@ -33,7 +39,12 @@ func (m *CameraManager) AddCamera(id, url string) error {
 	}
 
 	m.cameras[id] = cam
-	log.Printf("manager: added camera %s (%s)", id, url)
+	log.Printf("manager: camera %s added (%s)", id, url)
+
+	rec := recorder.NewRecorder(cam, m.cfg.RecordingDir, m.uploadCh)
+	go rec.Run()
+
+	log.Printf("manager: recorder started for %s", id)
 	return nil
 }
 
@@ -48,7 +59,7 @@ func (m *CameraManager) RemoveCamera(id string) error {
 
 	cam.Stop()
 	delete(m.cameras, id)
-	log.Printf("manager: removed camera %s", id)
+	log.Printf("manager: camera %s removed", id)
 	return nil
 }
 

@@ -22,7 +22,7 @@ func NewCamera(id, url string) *Camera {
 	return &Camera{
 		id:     id,
 		url:    url,
-		output: make(chan Frame, 5),
+		output: make(chan Frame, 30),
 	}
 }
 
@@ -34,9 +34,9 @@ func (c *Camera) Start() error {
 	c.client = client
 
 	go func() {
-		if err := client.Run(); err != nil {
-			log.Printf("[%s] camera error: %v", c.id, err)
-		}
+		client.Run()
+		close(c.output)
+		log.Printf("[%s] camera: stopped", c.id)
 	}()
 	return nil
 }
@@ -45,7 +45,6 @@ func (c *Camera) Stop() {
 	if c.client != nil {
 		c.client.Stop()
 	}
-	close(c.output)
 }
 
 func (c *Camera) Status() CameraStatus {
@@ -68,4 +67,18 @@ func (c *Camera) Status() CameraStatus {
 
 func (c *Camera) FrameChannel() <-chan Frame {
 	return c.output
+}
+
+func (c *Camera) SPS() []byte {
+	if c.client != nil {
+		return c.client.SPS()
+	}
+	return nil
+}
+
+func (c *Camera) PPS() []byte {
+	if c.client != nil {
+		return c.client.PPS()
+	}
+	return nil
 }

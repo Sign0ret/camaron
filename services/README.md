@@ -4,70 +4,195 @@ Local development stack for the orchestrator.
 
 ## Prerequisites
 
-- Docker
-- Docker Compose
+- [Colima](https://github.com/abiosoft/colima) (Docker runtime)
+- Docker + Docker Compose
+- Go ≥ 1.25
+- ffmpeg (for real camera streaming)
+
+```bash
+brew install colima docker docker-compose go ffmpeg
+```
 
 ---
 
-## Local Development
+## Quickstart (stream sintético)
 
 ### Start
 
-```bash
-cd services && docker compose up --build
-```
+Three terminals needed.
 
-This launches three containers:
+**Terminal 1 — Docker infrastructure:**
+
+```bash
+colima start
+cd services
+docker-compose up mediamtx minio ffmpeg -d
+sleep 3
+```
 
 | Container | Port | Role |
 |-----------|------|------|
-| `orchestrator` | 8080 | Go binary — RTSP ingestion + HTTP API |
 | `mediamtx` | 8554 | RTSP server |
-| `ffmpeg` | — | Generates a synthetic 640x480@30fps test pattern, publishes to mediamtx |
+| `minio` | 9000, 9001 | S3-compatible storage (local R2 alternative) |
+| `ffmpeg` | — | Generates synthetic 640x480@30fps test pattern → mediamtx |
 
-The orchestrator auto-connects to `rtsp://mediamtx:8554/test` as camera `test`.
-
-### Test
+**Terminal 2 — Orchestrator:**
 
 ```bash
-# Health
-curl http://localhost:8080/health
-
-# Ping
-curl http://localhost:8080/ping
-
-# List cameras
-curl http://localhost:8080/cameras
-
-# Camera status (frames_in, frames_throttled, frames_dropped)
-curl http://localhost:8080/camera/test/status | python3 -m json.tool
+cd services/orchestrator
+go build -o orchestrator .
+CAMERA_URLS=test=rtsp://mediamtx:8554/test \
+  S3_ENDPOINT=http://localhost:9000 \
+  S3_BUCKET=camaron \
+  S3_ACCESS_KEY_ID=minioadmin \
+  S3_SECRET_ACCESS_KEY=minioadmin \
+  S3_REGION=us-east-1 \
+  S3_USE_PATH_STYLE=true \
+  RECORDING_DIR=/tmp/camaron/recordings \
+  ./orchestrator
 ```
 
-Expected output for `/camera/test/status`:
+**Terminal 3 — Verify:**
 
-```json
-{
-    "id": "test",
-    "url": "rtsp://mediamtx:8554/test",
-    "running": true,
-    "frames_in": 1373,
-    "frames_throttled": 1349,
-    "frames_dropped": 0
-}
+```bash
+curl http://localhost:8080/health          # {"status":"ok"}
+curl http://localhost:8080/cameras         # ["test"]
+curl http://localhost:8080/camera/test/status
+ls -la /tmp/camaron/recordings/test/
+
+# MinIO console
+open http://localhost:9001  # minioadmin / minioadmin → bucket camaron
 ```
 
 ### Stop
 
 ```bash
-cd services && docker compose down
+# Ctrl+C in orchestrator terminal
+# Ctrl+C in ffmpeg terminal
+cd services && docker-compose down
+colima stop
 ```
 
-### Troubleshooting
+---
 
-If `frames_in` stays at `0` after startup, the ffmpeg container may not have finished publishing yet. Restart the orchestrator:
+## Quickstart (cámara real de Mac)
+
+### Start
+
+**Terminal 1 — Docker infrastructure:**
 
 ```bash
-docker compose restart orchestrator
+colima start
+cd services
+docker-compose up mediamtx minio -d
+sleep 3
+```
+
+**Terminal 2 — Cámara Mac → RTSP:**
+
+```bash
+# List devices if needed
+ffmpeg -f avfoundation -list_devices true -i ""
+
+# Stream camera (reconnects on failure)
+while true; do
+  ffmpeg -f avfoundation -framerate 30 -video_size 1280x720 -i "0" \
+    -c:v libx264 -preset ultrafast -tune zerolatency \
+    -pix_fmt yuv420p -g 30 -keyint_min 30 \
+    -flags +global_header -f rtsp -rtsp_transport tcp \
+    rtsp://localhost:8554/mac
+  sleep 2
+done
+```
+
+**Terminal 3 — Orchestrator:**
+
+```bash
+cd services/orchestrator
+go build -o orchestrator .
+CAMERA_URLS=mac=rtsp://mediamtx:8554/mac \
+  S3_ENDPOINT=http://localhost:9000 \
+  S3_BUCKET=camaron \
+  S3_ACCESS_KEY_ID=minioadmin \
+  S3_SECRET_ACCESS_KEY=minioadmin \
+  S3_REGION=us-east-1 \
+  S3_USE_PATH_STYLE=true \
+  RECORDING_DIR=/tmp/camaron/recordings \
+  ./orchestrator
+```
+
+**Terminal 4 — Verify:**
+
+```bash
+curl http://localhost:8080/camera/mac/status
+ls -la /tmp/camaron/recordings/mac/
+ffplay /tmp/camaron/recordings/mac/*.mp4
+open http://localhost:9001  # minioadmin / minioadmin → bucket camaron → mac/
+```
+
+### Stop
+
+```bash
+# Ctrl+C in each terminal (orchestrator, ffmpeg)
+cd services && docker-compose down
+colima stop
+```
+
+---
+
+## Architecture
+
+```
+Camera RTSP ─► orchestrator ─► MP4 segments (5s = 25 frames @ 5fps) ─► disk ─► MinIO/R2
+                  │                           │                            │
+            h264.Decoder              joy4 muxer                    S3 + MD5 verify
+         (FU-A, STAP-A, SPS/PPS)   (atomic tmp→rename)          (retry ×3, ETag check)
+```
+
+### Endpoints
+
+| Method | Path | Response |
+|--------|------|----------|
+| GET | `/health` | `{"status":"ok"}` |
+| GET | `/ping` | `{"pong":"verified"}` |
+| GET | `/cameras` | `["cam1","cam2"]` |
+| GET | `/camera/{id}/status` | `{"id":"...","running":true,"frames_in":501,...}` |
+
+### Env vars
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CAMERA_URLS` | — | Comma-separated `id=rtsp_url` pairs |
+| `CAMERAS_CONFIG` | — | Path to JSON file with camera list |
+| `S3_ENDPOINT` | `http://minio:9000` | S3 endpoint (MinIO or R2) |
+| `S3_BUCKET` | `camaron` | Bucket name |
+| `S3_ACCESS_KEY_ID` | `minioadmin` | S3 access key |
+| `S3_SECRET_ACCESS_KEY` | `minioadmin` | S3 secret key |
+| `S3_REGION` | `us-east-1` | S3 region (`auto` for R2) |
+| `S3_USE_PATH_STYLE` | `true` | Path-style for MinIO, `false` for R2 |
+| `RECORDING_DIR` | `/tmp/camaron/recordings` | Local segment directory |
+| `SEGMENT_FRAMES` | `25` | Frames per MP4 segment |
+| `FPS_LIMIT` | `5` | Recording FPS |
+| `UPLOAD_WORKERS` | `10` | Concurrent S3 upload workers |
+
+### Multiple cameras (production)
+
+Use `CAMERAS_CONFIG` pointing to a JSON file:
+
+```json
+{
+  "cameras": [
+    {"id": "cam1", "url": "rtsp://192.168.1.100:554/stream1"},
+    {"id": "cam2", "url": "rtsp://192.168.1.101:554/stream1"}
+  ]
+}
+```
+
+```bash
+CAMERAS_CONFIG=/etc/camaron/cameras.json \
+  S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com \
+  S3_USE_PATH_STYLE=false \
+  ...
 ```
 
 ---
