@@ -1,108 +1,144 @@
 # Services
 
-Local development stack for the orchestrator.
+Local development stack for the orchestrator + inference worker.
 
 ## Prerequisites
 
-- Docker
-- Docker Compose
+- Docker & Docker Compose (for Go orchestrator + RTSP relay)
+- Python 3.11+ (for running inference worker on host — macOS Docker cannot access host cameras)
 
 ---
 
-## Local Development
+## Local Development with Laptop Camera
 
-### Start
+### 1. Start the orchestrator and RTSP relay
 
 ```bash
-cd services && docker compose up --build
+cd services && docker compose up --build -d orchestrator mediamtx
 ```
 
-This launches three containers:
+This launches:
 
-| Container | Port | Role |
-|-----------|------|------|
-| `orchestrator` | 8080 | Go binary — RTSP ingestion + HTTP API |
-| `mediamtx` | 8554 | RTSP server |
-| `ffmpeg` | — | Generates a synthetic 640x480@30fps test pattern, publishes to mediamtx |
+| Container      | Port  | Role                                            |
+|----------------|-------|-------------------------------------------------|
+| `orchestrator` | 8080  | Go binary — camera registry & control-plane API |
+| `mediamtx`     | 8554  | RTSP server (optional, for future real cameras) |
 
-The orchestrator auto-connects to `rtsp://mediamtx:8554/test` as camera `test`.
-
-### Test
+### 2. Register your laptop camera
 
 ```bash
-# Health
-curl http://localhost:8080/health
+curl -X POST http://localhost:8080/cameras \
+  -H "Content-Type: application/json" \
+  -d '{"id":"macbook","url":"device://0"}'
+```
 
-# Ping
-curl http://localhost:8080/ping
+`device://0` tells the Python worker to open the first video capture device using the native OS API (AVFoundation on macOS, V4L2 on Linux).
 
-# List cameras
+### 3. Run the inference worker on your host
+
+Docker Desktop cannot access macOS camera hardware, so the worker must run natively:
+
+```bash
+cd services/inference
+./run-local.sh
+```
+
+This will:
+- Create a Python virtual environment (`services/inference/.venv`)
+- Install PyAV, Pillow, and requests
+- Connect to the orchestrator at `http://localhost:8080`
+- Open your laptop camera
+- Save one JPEG snapshot every **1 second** (wall-clock time)
+
+### 4. Check the output
+
+```bash
+ls services/inference/data/snapshots/macbook/
+```
+
+You should see files like `frame_20240115_120000_000000.jpg` every second.
+
+### 5. Verify the control plane
+
+```bash
+# List registered cameras
 curl http://localhost:8080/cameras
 
-# Camera status (frames_in, frames_throttled, frames_dropped)
-curl http://localhost:8080/camera/test/status | python3 -m json.tool
+# Get one camera config
+curl http://localhost:8080/cameras/macbook
+
+# Health check
+curl http://localhost:8080/health
 ```
 
-Expected output for `/camera/test/status`:
-
-```json
-{
-    "id": "test",
-    "url": "rtsp://mediamtx:8554/test",
-    "running": true,
-    "frames_in": 1373,
-    "frames_throttled": 1349,
-    "frames_dropped": 0
-}
-```
-
-### Stop
+### 6. Stop
 
 ```bash
+# Stop the host inference worker (Ctrl-C in its terminal)
+
+# Stop Docker services
 cd services && docker compose down
 ```
 
-### Troubleshooting
+---
 
-If `frames_in` stays at `0` after startup, the ffmpeg container may not have finished publishing yet. Restart the orchestrator:
+## Using an RTSP Camera Instead
+
+If you have a real IP camera or want to use the synthetic test stream:
 
 ```bash
-docker compose restart orchestrator
+# 1. Start everything including the fake ffmpeg stream
+cd services && docker compose up --build -d
+
+# 2. Register the RTSP stream
+curl -X POST http://localhost:8080/cameras \
+  -H "Content-Type: application/json" \
+  -d '{"id":"test","url":"rtsp://mediamtx:8554/test"}'
+
+# 3. The inference container will auto-connect and save snapshots
+#    (no host Python needed for pure RTSP streams)
 ```
 
 ---
 
-## Staging VPS (178.156.164.154)
+## Architecture
 
-The VPS only runs the orchestrator — no cameras, no RTSP source by default.
-
-### Working endpoints
-
-```bash
-# Health (always responds)
-curl http://178.156.164.154:8080/health
-# → {"status":"ok"}
-
-# Ping
-curl http://178.156.164.154:8080/ping
-# → {"pong":"verified"}
-
-# Camera list (empty — no cameras configured)
-curl http://178.156.164.154:8080/cameras
-# → []
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Your Laptop (macOS)                                        │
+│                                                             │
+│  ┌─────────────────┐      HTTP      ┌─────────────────────┐ │
+│  │ inference worker│ ◄─────────────►│  orchestrator (Go)  │ │
+│  │ (host Python)   │  /stream-configs│  :8080              │ │
+│  │                 │                │  Camera registry    │ │
+│  │ • PyAV decode   │                └─────────────────────┘ │
+│  │ • Wall-clock    │                                         │
+│  │   sampling      │                                         │
+│  │ • Save JPEG     │                                         │
+│  └────────┬────────┘                                         │
+│           │ avfoundation                                     │
+│           ▼                                                  │
+│  ┌─────────────────┐                                         │
+│  │  FaceTime HD    │                                         │
+│  │  Camera (0)     │                                         │
+│  └─────────────────┘                                         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Expected failures (no cameras nor RTSP source on VPS)
+---
 
-```bash
-# Non-existent camera
-curl http://178.156.164.154:8080/camera/test/status
-# → {"error":"camera not found"}
+## Sampling Behavior
 
-# No frames being ingested (check logs)
-ssh root@178.156.164.154 "docker compose -f /opt/camaron/docker-compose.yml logs orchestrator 2>&1 | tail -20"
-# Output will NOT contain "[test] rtsp: streaming started" — no cameras active
+The inference worker uses **wall-clock time** (`time.time()`) to decide when to process a frame:
+
+```python
+now = time.time()
+if now - last_sample_time >= SAMPLE_INTERVAL:
+    # process frame
+    last_sample_time = now
 ```
+
+This guarantees a strict interval regardless of the camera's actual frame rate or network jitter. The default `SAMPLE_INTERVAL` is **1.0 second**.
 
 ---
 
