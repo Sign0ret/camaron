@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/Sign0ret/camaron/services/orchestrator/internal"
@@ -20,21 +19,6 @@ func main() {
 
 	manager := internal.NewCameraManager()
 
-	cameraURLs := os.Getenv("CAMERA_URLS")
-	if cameraURLs != "" {
-		for _, entry := range strings.Split(cameraURLs, ",") {
-			parts := strings.SplitN(entry, "=", 2)
-			if len(parts) != 2 {
-				log.Printf("invalid camera entry: %s", entry)
-				continue
-			}
-			id, url := parts[0], parts[1]
-			if err := manager.AddCamera(id, url); err != nil {
-				log.Printf("failed to add camera %s: %v", id, err)
-			}
-		}
-	}
-
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -47,23 +31,62 @@ func main() {
 
 	http.HandleFunc("/cameras", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(manager.List())
+		switch r.Method {
+		case http.MethodGet:
+			json.NewEncoder(w).Encode(manager.List())
+		case http.MethodPost:
+			var cfg internal.CameraConfig
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+				http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+				return
+			}
+			if cfg.ID == "" || cfg.URL == "" {
+				http.Error(w, `{"error":"id and url required"}`, http.StatusBadRequest)
+				return
+			}
+			if err := manager.Add(cfg); err != nil {
+				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusConflict)
+				return
+			}
+			log.Printf("registered camera %s (%s)", cfg.ID, cfg.URL)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(cfg)
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		}
 	})
 
-	http.HandleFunc("/camera/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/cameras/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		id := strings.TrimPrefix(r.URL.Path, "/camera/")
-		id = strings.TrimSuffix(id, "/status")
+		id := r.URL.Path[len("/cameras/"):]
 		if id == "" {
 			http.Error(w, `{"error":"camera id required"}`, http.StatusBadRequest)
 			return
 		}
-		status, ok := manager.Status(id)
-		if !ok {
-			http.Error(w, `{"error":"camera not found"}`, http.StatusNotFound)
-			return
+
+		switch r.Method {
+		case http.MethodGet:
+			cfg, ok := manager.Get(id)
+			if !ok {
+				http.Error(w, `{"error":"camera not found"}`, http.StatusNotFound)
+				return
+			}
+			json.NewEncoder(w).Encode(cfg)
+		case http.MethodDelete:
+			if err := manager.Remove(id); err != nil {
+				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusNotFound)
+				return
+			}
+			log.Printf("removed camera %s", id)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		}
-		json.NewEncoder(w).Encode(status)
+	})
+
+	http.HandleFunc("/stream-configs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(manager.List())
 	})
 
 	go func() {
@@ -78,6 +101,5 @@ func main() {
 	<-quit
 
 	log.Println("shutting down...")
-	manager.Shutdown()
 	log.Println("shutdown complete")
 }
