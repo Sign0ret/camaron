@@ -1,75 +1,133 @@
 # Camaron
 
-Stream any camera to a VPS, save snapshots, and view them locally.
+Stream any camera to a VPS. Frames are buffered in memory and flushed as 5-second MP4 chunks to Cloudflare R2 every 5 seconds.
 
-## Quickstart
+## What you need
 
-You need a VPS (Ubuntu + Docker), a Mac with `ffmpeg` installed, and optionally a Cloudflare R2 bucket if you want off-VPS snapshot storage.
+- A VPS (Ubuntu + Docker)
+- A Mac with `ffmpeg` installed: `brew install ffmpeg`
+- A Cloudflare R2 bucket + API token
 
-### 1. Start the VPS stack
+## Setup
+
+### 1. VPS first-time init
 
 ```bash
 scp scripts/vps-init.sh root@YOUR_VPS_IP:/root/vps-init.sh
 ssh root@YOUR_VPS_IP "bash /root/vps-init.sh"
 ```
 
-The `.env` file on the VPS is managed automatically by GitHub Actions. Add R2 credentials as **GitHub Repository Secrets** (`Settings → Secrets and variables → Actions`):
+### 2. Add R2 credentials to GitHub
+
+Go to `Settings → Secrets and variables → Actions` in your repo and add:
 
 - `R2_BUCKET_NAME`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_ENDPOINT_URL` (format: `https://<account_id>.r2.cloudflarestorage.com`)
 
-The next deploy will write these to `/opt/camaron/.env` on the VPS automatically.
+### 3. Deploy
 
-Verify:
+```bash
+git push origin main
+```
+
+GitHub Actions builds images and deploys to the VPS automatically. The `.env` file is written from secrets on every deploy.
+
+Verify the stack is up:
+
 ```bash
 ssh root@YOUR_VPS_IP "curl -s http://localhost:8080/health"
 # → {"status":"ok"}
 ```
 
-### 2. Stream your Mac camera to the VPS
+---
+
+## Add a camera
+
+Two steps: stream to the VPS, then register it.
+
+### Step A — Stream
+
+Run this on your Mac. Replace `CAMERA_ID` with any name you want (e.g., `macbook`, `livingroom`, `garage`):
 
 ```bash
 ffmpeg -re -f avfoundation -framerate 30 -video_size 1280x720 -pix_fmt yuv420p -i "0" \
   -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
   -rtsp_transport tcp \
-  -f rtsp rtsp://YOUR_VPS_IP:8554/macbook
+  -f rtsp rtsp://YOUR_VPS_IP:8554/CAMERA_ID
 ```
 
-### 3. Register the camera
+Keep this terminal open. `ffmpeg` is now pushing your camera to the VPS MediaMTX server.
+
+### Step B — Register
+
+Tell the orchestrator about this camera so the inference worker starts pulling it:
 
 ```bash
 curl -X POST http://YOUR_VPS_IP:8080/cameras \
   -H "Content-Type: application/json" \
-  -d '{"id":"macbook","url":"rtsp://mediamtx:8554/macbook"}'
+  -d '{"id":"CAMERA_ID","url":"rtsp://mediamtx:8554/CAMERA_ID"}'
 ```
 
-### 4. Verify it is working
+Replace `CAMERA_ID` with the same name you used in the ffmpeg command.
+
+**Verify registration:**
 
 ```bash
-ssh root@YOUR_VPS_IP "
-  echo '--- Cameras ---' &&
-  curl -s http://localhost:8080/cameras &&
-  echo &&
-  echo '--- Latest snapshots ---' &&
-  ls -lt /data/camaron/snapshots/macbook/ 2>/dev/null | head -5 &&
-  echo &&
-  echo '--- Snapshots in last 60s ---' &&
-  find /data/camaron/snapshots/macbook/ -type f -mmin -1 | wc -l
-"
+curl http://YOUR_VPS_IP:8080/cameras
+# → [{"id":"CAMERA_ID","url":"rtsp://mediamtx:8554/CAMERA_ID"}]
 ```
 
-### 5. View snapshots
+### Step C — Confirm in logs
 
-If you configured R2, open the R2 dashboard or use any S3-compatible tool.  
-If snapshots are only on the VPS disk, copy them to your Mac:
+Watch the inference worker pick up the new camera in real time:
 
 ```bash
-mkdir -p ~/camaron-snapshots
-rsync -avz root@YOUR_VPS_IP:/data/camaron/snapshots/ ~/camaron-snapshots/
-open ~/camaron-snapshots/macbook
+ssh root@YOUR_VPS_IP "docker logs -f camaron-inference-1"
 ```
+
+You should see within ~10 seconds:
+
+```
+[pool] starting camera CAMERA_ID
+[CAMERA_ID] connected to rtsp://mediamtx:8554/CAMERA_ID
+[CAMERA_ID] encoded /tmp/chunk_CAMERA_ID_20240115_143000.mp4 (5 frames @ 1fps)
+[CAMERA_ID] uploaded r2://BUCKET/CAMERA_ID/chunk_CAMERA_ID_20240115_143000.mp4
+```
+
+A new `.mp4` file appears in R2 every ~5 seconds.
+
+---
+
+## Delete a camera
+
+Stop the ffmpeg stream on your Mac, then:
+
+```bash
+curl -X DELETE http://YOUR_VPS_IP:8080/cameras/CAMERA_ID
+```
+
+The inference worker will stop automatically on the next poll.
+
+---
+
+## View recordings
+
+Open your Cloudflare R2 dashboard. Each camera has its own folder (`CAMERA_ID/`) containing `.mp4` files named by timestamp.
+
+---
+
+## Architecture
+
+```
+Mac ffmpeg → VPS MediaMTX (8554) → inference worker → R2 MP4 chunks
+                                ↘ orchestrator (8080) ← API
+```
+
+- **orchestrator** (Go, port 8080): camera registry REST API
+- **mediamtx** (port 8554): RTSP server that receives the ffmpeg push
+- **inference** (Python + PyAV): buffers decoded frames in memory, flushes a 5-second MP4 chunk every 5 seconds, uploads to R2
 
 ---
 
@@ -78,22 +136,10 @@ open ~/camaron-snapshots/macbook
 | Endpoint | Method | Body | Description |
 |---|---|---|---|
 | `/health` | `GET` | — | Health check |
-| `/cameras` | `GET` | — | List cameras |
-| `/cameras` | `POST` | `{"id":"x","url":"rtsp://..."}` | Register camera |
-| `/cameras/{id}` | `DELETE` | — | Remove camera |
-
----
-
-## Architecture
-
-```
-Mac ffmpeg → VPS MediaMTX (8554) → inference worker → snapshots
-                                ↘ orchestrator (8080) ← API
-```
-
-- **orchestrator** (Go): camera registry REST API
-- **inference** (Python + PyAV): pulls RTSP, saves JPEG every 1s
-- **mediamtx**: RTSP server that receives the ffmpeg push
+| `/cameras` | `GET` | — | List all cameras |
+| `/cameras` | `POST` | `{"id":"x","url":"rtsp://..."}` | Register a camera |
+| `/cameras/{id}` | `GET` | — | Get one camera |
+| `/cameras/{id}` | `DELETE` | — | Remove a camera |
 
 ---
 
@@ -101,10 +147,11 @@ Mac ffmpeg → VPS MediaMTX (8554) → inference worker → snapshots
 
 | Problem | Fix |
 |---|---|
-| Inference logs show `404 Not Found` | ffmpeg is not connected. Restart ffmpeg and check MediaMTX logs. |
-| ffmpeg says `broken pipe` | Add `-re` so it does not flood the server. |
-| No snapshots after registering | Wait 10s for inference to poll, then check logs. |
-| Port 8554 refused | Open port 8554 in your VPS firewall and cloud provider. |
+| `404 Not Found` in inference logs | ffmpeg is not connected. Check ffmpeg is running and the `CAMERA_ID` matches exactly between ffmpeg path and POST body. |
+| `broken pipe` in ffmpeg | Add `-re` flag so ffmpeg does not flood the server. |
+| No `starting camera` in logs | Wait 10s for poll interval. Verify with `curl /cameras`. |
+| `r2 upload failed` | Check `.env` on VPS (`cat /opt/camaron/.env`) and GitHub Secrets are correct. |
+| Port 8554 refused | Open port 8554 in VPS firewall (`ufw allow 8554`) and cloud provider security group. |
 
 ---
 
@@ -118,7 +165,6 @@ curl -X POST http://localhost:8080/cameras \
   -H "Content-Type: application/json" \
   -d '{"id":"macbook","url":"device://0"}'
 cd services/inference && ./run-local.sh
-ls services/inference/data/snapshots/macbook/
 ```
 
 See `services/docker-compose.yml` for the local stack and `services/docker-compose.prod.yml` for the VPS stack.
