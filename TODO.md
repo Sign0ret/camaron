@@ -10,17 +10,15 @@
 - `services/docker-compose.prod.yml`: passes R2 env vars to inference container
 - `.env.vps.example`: added commented R2 credential template
 
-**To enable R2 on your VPS:**
+**To enable R2:**
 1. Create a bucket in the Cloudflare R2 dashboard.
 2. Generate an S3-compatible API token (Admin Read & Write).
-3. Edit `/opt/camaron/.env` on the VPS:
-   ```
-   R2_BUCKET_NAME=camaron-snapshots
-   R2_ACCESS_KEY_ID=...
-   R2_SECRET_ACCESS_KEY=...
-   R2_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
-   ```
-4. Restart inference: `docker compose -f docker-compose.prod.yml restart inference`
+3. Add the 4 values as **GitHub Repository Secrets** (`Settings → Secrets and variables → Actions`):
+   - `R2_BUCKET_NAME`
+   - `R2_ACCESS_KEY_ID`
+   - `R2_SECRET_ACCESS_KEY`
+   - `R2_ENDPOINT_URL`
+4. Push to `main`. GitHub Actions will write `/opt/camaron/.env` on the VPS automatically and restart inference.
 
 **Remaining:**
 - Add R2 public URL to orchestrator camera metadata so the admin app can display images directly.

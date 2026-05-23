@@ -13,7 +13,14 @@ scp scripts/vps-init.sh root@YOUR_VPS_IP:/root/vps-init.sh
 ssh root@YOUR_VPS_IP "bash /root/vps-init.sh"
 ```
 
-If you want snapshots uploaded to R2, create `/opt/camaron/.env` on the VPS with your R2 credentials (see `.env.vps.example`).
+The `.env` file on the VPS is managed automatically by GitHub Actions. Add R2 credentials as **GitHub Repository Secrets** (`Settings → Secrets and variables → Actions`):
+
+- `R2_BUCKET_NAME`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_ENDPOINT_URL` (format: `https://<account_id>.r2.cloudflarestorage.com`)
+
+The next deploy will write these to `/opt/camaron/.env` on the VPS automatically.
 
 Verify:
 ```bash

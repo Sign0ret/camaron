@@ -36,18 +36,7 @@ else
   echo -e "  ${red}⚠ /root/deploy.sh not found — deploy script missing${nc}"
 fi
 
-# ── 5. Environment file ───────────────────────────────
-ENV_FILE=/opt/camaron/.env
-if [ -f /root/.env ]; then
-  cp /root/.env "$ENV_FILE" && step ".env copied to $ENV_FILE"
-elif [ -f "$ENV_FILE" ]; then
-  skip "$ENV_FILE already exists"
-else
-  step "Creating empty $ENV_FILE"
-  echo "# camaron environment variables" > "$ENV_FILE"
-fi
-
-# ── 6. Compose file (first-run only) ──────────────────
+# ── 5. Compose file (first-run only) ──────────────────
 COMPOSE_FILE=/opt/camaron/docker-compose.prod.yml
 if [ -f "$COMPOSE_FILE" ]; then
   skip "$COMPOSE_FILE exists (skipping overwrite)"
