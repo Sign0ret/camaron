@@ -4,7 +4,7 @@ Stream any camera to a VPS, save snapshots, and view them locally.
 
 ## Quickstart
 
-You need a VPS (Ubuntu + Docker) and a Mac with `ffmpeg` installed.
+You need a VPS (Ubuntu + Docker), a Mac with `ffmpeg` installed, and optionally a Cloudflare R2 bucket if you want off-VPS snapshot storage.
 
 ### 1. Start the VPS stack
 
@@ -12,6 +12,8 @@ You need a VPS (Ubuntu + Docker) and a Mac with `ffmpeg` installed.
 scp scripts/vps-init.sh root@YOUR_VPS_IP:/root/vps-init.sh
 ssh root@YOUR_VPS_IP "bash /root/vps-init.sh"
 ```
+
+If you want snapshots uploaded to R2, create `/opt/camaron/.env` on the VPS with your R2 credentials (see `.env.vps.example`).
 
 Verify:
 ```bash
@@ -51,7 +53,10 @@ ssh root@YOUR_VPS_IP "
 "
 ```
 
-### 5. View snapshots on your Mac
+### 5. View snapshots
+
+If you configured R2, open the R2 dashboard or use any S3-compatible tool.  
+If snapshots are only on the VPS disk, copy them to your Mac:
 
 ```bash
 mkdir -p ~/camaron-snapshots

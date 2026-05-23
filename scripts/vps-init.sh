@@ -59,8 +59,6 @@ services:
     image: ghcr.io/sign0ret/camaron-orchestrator:latest
     ports:
       - "8080:8080"
-    environment:
-      - PORT=8080
     env_file: /opt/camaron/.env
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]

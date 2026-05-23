@@ -2,27 +2,29 @@
 
 ## 1. Store snapshots in Cloudflare R2 instead of local VPS disk
 
-**Current state:**
-- Inference worker saves JPEG snapshots to `/data/camaron/snapshots/{cameraId}/` on the VPS filesystem.
-- Users `rsync` them down to their Mac.
+**Status:** Implemented. Inference worker now uploads every saved JPEG to R2 if credentials are provided.
 
-**Goal:**
-- Upload every snapshot to a Cloudflare R2 bucket.
-- Replace local-only storage so snapshots survive VPS disk loss and are accessible via HTTPS URL.
+**What changed:**
+- `services/inference/requirements.txt`: added `boto3`
+- `services/inference/main.py`: `_upload_to_r2()` helper uploads after each `img.save()`
+- `services/docker-compose.prod.yml`: passes R2 env vars to inference container
+- `.env.vps.example`: added commented R2 credential template
 
-**Open questions / decisions:**
-- R2 bucket name and public/private access settings.
-- Credentials strategy: env vars injected via `.env` (already supported) vs. IAM-style tokens.
-- File naming / path structure in R2. Keep the same `cameraId/frame_YYYYMMDD_HHMMSS.jpg` convention?
-- Do we still keep a local cache, or upload-only?
-- Should the orchestrator return presigned URLs for the latest snapshot per camera?
+**To enable R2 on your VPS:**
+1. Create a bucket in the Cloudflare R2 dashboard.
+2. Generate an S3-compatible API token (Admin Read & Write).
+3. Edit `/opt/camaron/.env` on the VPS:
+   ```
+   R2_BUCKET_NAME=camaron-snapshots
+   R2_ACCESS_KEY_ID=...
+   R2_SECRET_ACCESS_KEY=...
+   R2_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
+   ```
+4. Restart inference: `docker compose -f docker-compose.prod.yml restart inference`
 
-**Rough plan:**
-1. Add `boto3` to `services/inference/requirements.txt` (R2 is S3-compatible).
-2. Update `services/inference/main.py` to upload each saved JPEG to R2 after writing locally.
-3. Add R2 env vars to `.env.vps.example` and `docker-compose.prod.yml`.
-4. Verify uploads via R2 dashboard / `aws s3 ls` equivalent.
-5. (Later) Optionally remove local disk storage entirely if R2 is the source of truth.
+**Remaining:**
+- Add R2 public URL to orchestrator camera metadata so the admin app can display images directly.
+- Optionally stop saving locally once R2 is proven stable.
 
 ---
 
