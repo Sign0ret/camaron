@@ -67,6 +67,11 @@ jobs:
           context: services/orchestrator
           push: ${{ github.event_name == 'push' }}
           tags: ghcr.io/sign0ret/camaron-orchestrator:latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/inference
+          push: ${{ github.event_name == 'push' }}
+          tags: ghcr.io/sign0ret/camaron-inference:latest
 
   deploy:
     needs: [docker, changes]
@@ -76,9 +81,20 @@ jobs:
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "scripts/deploy.sh,services/docker-compose.prod.yml"
+          target: "/opt/camaron"
+          strip_components: 1
       - uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          script: bash /root/deploy.sh
+          script: |
+            chmod +x /opt/camaron/deploy.sh
+            bash /opt/camaron/deploy.sh

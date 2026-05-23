@@ -31,8 +31,14 @@ for i in $(seq 1 $MAX_RETRIES); do
   sleep "$RETRY_INTERVAL"
 done
 
-echo "→ Swapping traffic..."
-cd /opt/camaron && docker compose up -d --force-recreate orchestrator
+echo "→ Pulling latest stack images..."
+cd /opt/camaron && docker compose -f docker-compose.prod.yml pull
+
+echo "→ Swapping orchestrator..."
+cd /opt/camaron && docker compose -f docker-compose.prod.yml up -d --force-recreate orchestrator
+
+echo "→ Updating remaining services..."
+cd /opt/camaron && docker compose -f docker-compose.prod.yml up -d
 
 echo "→ Cleaning up staging..."
 docker rm -f orchestrator-staging 2>/dev/null || true
