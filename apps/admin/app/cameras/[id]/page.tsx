@@ -52,7 +52,9 @@ export default async function CameraDetailPage({ params }: Props) {
       <div className="card" style={{ marginBottom: '2rem' }}>
         <div className="card-title">Configuration</div>
         <div className="card-meta">Stream URL: {camera.url}</div>
-        <div className="card-meta">Resolution: {camera.resolution || '640x480'}</div>
+        <div className="card-meta">
+          Resolution: {camera.resolution || '640x480'}
+        </div>
         <div className="card-meta">
           Created:{' '}
           {camera.created_at

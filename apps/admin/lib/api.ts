@@ -24,7 +24,7 @@ export interface Recording {
 export async function registerCamera(
   id: string,
   url: string,
-  resolution: string = '640x480',
+  resolution = '640x480',
 ): Promise<Camera> {
   const res = await fetch('/api/cameras', {
     method: 'POST',

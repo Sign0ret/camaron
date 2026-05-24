@@ -115,7 +115,9 @@ export default function CameraList({
           <select
             id="resolution"
             value={form.resolution}
-            onChange={(e) => setForm((f) => ({ ...f, resolution: e.target.value }))}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, resolution: e.target.value }))
+            }
           >
             <option value="640x480">640×480 (SD, less CPU)</option>
             <option value="1280x720">1280×720 (HD, more CPU)</option>
