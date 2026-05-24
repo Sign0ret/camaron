@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.filter.outputs.services }}
-      admin: ${{ steps.filter.outputs.admin }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,11 +25,6 @@ jobs:
           filters: |
             services:
               - 'services/**'
-            admin:
-              - 'apps/admin/**'
-              - 'packages/turso/**'
-              - 'packages/ui/**'
-              - 'packages/typescript-config/**'
 
   go:
     runs-on: ubuntu-latest
@@ -115,49 +109,4 @@ jobs:
             chmod +x /opt/camaron/deploy.sh
             bash /opt/camaron/deploy.sh
 
-  deploy-admin:
-    needs: [js, changes]
-    if: |
-      (needs.changes.outputs.admin == 'true' || needs.changes.outputs.services == 'true') &&
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-      - run: pnpm install
-      - name: Set admin env vars
-        run: |
-          echo "TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }}" >> $GITHUB_ENV
-          echo "TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }}" >> $GITHUB_ENV
-          echo "R2_PUBLIC_URL=${{ secrets.R2_PUBLIC_URL }}" >> $GITHUB_ENV
-      - name: Build admin for Vercel
-        run: cd apps/admin && pnpm build
-        env:
-          TURSO_DATABASE_URL: ${{ env.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ env.TURSO_AUTH_TOKEN }}
-          R2_PUBLIC_URL: ${{ env.R2_PUBLIC_URL }}
-      - name: Push runtime env to Vercel
-        run: |
-          cd apps/admin
-          npx vercel env rm TURSO_DATABASE_URL production --yes --token=${{ secrets.VERCEL_TOKEN }} 2>/dev/null || true
-          echo "${{ env.TURSO_DATABASE_URL }}" | npx vercel env add TURSO_DATABASE_URL production --token=${{ secrets.VERCEL_TOKEN }}
-          npx vercel env rm TURSO_AUTH_TOKEN production --yes --token=${{ secrets.VERCEL_TOKEN }} 2>/dev/null || true
-          echo "${{ env.TURSO_AUTH_TOKEN }}" | npx vercel env add TURSO_AUTH_TOKEN production --token=${{ secrets.VERCEL_TOKEN }}
-          npx vercel env rm R2_PUBLIC_URL production --yes --token=${{ secrets.VERCEL_TOKEN }} 2>/dev/null || true
-          echo "${{ env.R2_PUBLIC_URL }}" | npx vercel env add R2_PUBLIC_URL production --token=${{ secrets.VERCEL_TOKEN }}
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: '--prod'
-          working-directory: ./apps/admin
+
