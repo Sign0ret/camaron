@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+import random
 import time
 import threading
 from datetime import datetime
@@ -115,7 +116,10 @@ class Mp4Chunker:
 
     def __init__(self, camera_id: str, chunk_sec: float = 5.0):
         self.camera_id = camera_id
-        self.chunk_sec = chunk_sec
+        # Stagger flush windows per camera to avoid thundering herd.
+        # A 1.5-second jitter spreads encode/upload load across time.
+        jitter = random.uniform(0, 1.5)
+        self.chunk_sec = chunk_sec + jitter
         self._buffer: list[tuple[datetime, np.ndarray]] = []
         self._chunk_start_ts: float | None = None
         self._lock = threading.Lock()
@@ -194,13 +198,20 @@ class Mp4Chunker:
         if s3 is None:
             return
         key = f"{self.camera_id}/{os.path.basename(path)}"
-        try:
-            s3.upload_file(path, R2_BUCKET, key)
-            print(f"[{self.camera_id}] uploaded r2://{R2_BUCKET}/{key}")
-            _report_status(self.camera_id, "chunk_uploaded")
-            _log_to_turso(self.camera_id, os.path.basename(path), "chunk_uploaded")
-        except Exception as e:
-            print(f"[{self.camera_id}] r2 upload failed: {e}")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                s3.upload_file(path, R2_BUCKET, key)
+                print(f"[{self.camera_id}] uploaded r2://{R2_BUCKET}/{key}")
+                _report_status(self.camera_id, "chunk_uploaded")
+                _log_to_turso(self.camera_id, os.path.basename(path), "chunk_uploaded")
+                return
+            except Exception as e:
+                print(f"[{self.camera_id}] r2 upload attempt {attempt + 1}/{max_attempts} failed: {e}")
+                if attempt < max_attempts - 1:
+                    # Exponential backoff: 2s, then 4s. Sleep yields CPU to other threads.
+                    time.sleep(2 ** attempt * 2)
+        print(f"[{self.camera_id}] r2 upload permanently failed after {max_attempts} attempts")
 
 
 class StreamWorker(threading.Thread):
