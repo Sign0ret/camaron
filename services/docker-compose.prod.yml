@@ -4,6 +4,11 @@ services:
     ports:
       - "8080:8080"
     env_file: /opt/camaron/.env
+    environment:
+      - PORT=8080
+      - TURSO_DATABASE_URL=${TURSO_DATABASE_URL}
+      - TURSO_AUTH_TOKEN=${TURSO_AUTH_TOKEN}
+      - ORCHESTRATOR_API_KEY=${ORCHESTRATOR_API_KEY}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 10s
@@ -17,9 +22,12 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ORCHESTRATOR_URL=http://orchestrator:8080
+      - ORCHESTRATOR_API_KEY=${ORCHESTRATOR_API_KEY}
       - OUTPUT_DIR=/data/snapshots
       - POLL_INTERVAL=10
       - SAMPLE_INTERVAL=1.0
+      - TURSO_DATABASE_URL=${TURSO_DATABASE_URL}
+      - TURSO_AUTH_TOKEN=${TURSO_AUTH_TOKEN}
     env_file: /opt/camaron/.env
     volumes:
       - /data/camaron/snapshots:/data/snapshots

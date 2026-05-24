@@ -11,6 +11,7 @@ from PIL import Image
 import requests
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8080")
+ORCHESTRATOR_API_KEY = os.getenv("ORCHESTRATOR_API_KEY", "")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "10"))
 SAMPLE_INTERVAL = float(os.getenv("SAMPLE_INTERVAL", "1.0"))
 
@@ -21,6 +22,13 @@ R2_SECRET_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT_URL")
 
 _r2_client = None
+_turso_available = False
+
+try:
+    from turso import record_upload as _turso_record_upload, set_online as _turso_set_online
+    _turso_available = True
+except Exception:
+    pass
 
 
 def get_r2_client():
@@ -37,6 +45,37 @@ def get_r2_client():
         aws_secret_access_key=R2_SECRET_KEY,
     )
     return _r2_client
+
+
+def _report_status(camera_id: str, event: str):
+    """Notify the orchestrator of camera state changes."""
+    try:
+        headers = {"Content-Type": "application/json"}
+        if ORCHESTRATOR_API_KEY:
+            headers["X-API-Key"] = ORCHESTRATOR_API_KEY
+        requests.post(
+            f"{ORCHESTRATOR_URL}/camera-status",
+            json={"id": camera_id, "event": event},
+            headers=headers,
+            timeout=5,
+        )
+    except Exception:
+        pass  # best-effort; don't crash the stream on orchestrator hiccups
+
+
+def _log_to_turso(camera_id: str, filename: str, event: str):
+    """Optionally write directly to Turso for redundancy."""
+    if not _turso_available:
+        return
+    try:
+        if event == "chunk_uploaded":
+            _turso_record_upload(camera_id, filename)
+        elif event == "connected":
+            _turso_set_online(camera_id, True)
+        elif event == "disconnected":
+            _turso_set_online(camera_id, False)
+    except Exception:
+        pass
 
 
 def open_input(url: str):
@@ -156,6 +195,8 @@ class Mp4Chunker:
         try:
             s3.upload_file(path, R2_BUCKET, key)
             print(f"[{self.camera_id}] uploaded r2://{R2_BUCKET}/{key}")
+            _report_status(self.camera_id, "chunk_uploaded")
+            _log_to_turso(self.camera_id, os.path.basename(path), "chunk_uploaded")
         except Exception as e:
             print(f"[{self.camera_id}] r2 upload failed: {e}")
 
@@ -181,6 +222,8 @@ class StreamWorker(threading.Thread):
             except Exception:
                 pass
         self._chunker.stop()
+        _report_status(self.camera_id, "disconnected")
+        _log_to_turso(self.camera_id, "", "disconnected")
 
     def run(self):
         log_prefix = f"[{self.camera_id}]"
@@ -194,6 +237,8 @@ class StreamWorker(threading.Thread):
                 stream = container.streams.video[0]
                 last_sample_time = 0.0
                 print(f"{log_prefix} connected to {self.url}")
+                _report_status(self.camera_id, "connected")
+                _log_to_turso(self.camera_id, "", "connected")
 
                 try:
                     for packet in container.demux(stream):
@@ -215,22 +260,7 @@ class StreamWorker(threading.Thread):
                             # ═══════════════════════════════════════════════════
                             # TODO: Inference Pipeline (YOLO + ByteTrack + Turso)
                             # ───────────────────────────────────────────────────
-                            # Inputs:
-                            #   - arr: np.ndarray (H, W, 3), RGB24, uint8
-                            #   - self.camera_id: str
-                            #   - timestamp: datetime
-                            #
-                            # Steps:
-                            #   1. Run YOLO inference on `arr`
-                            #   2. Feed detections to ByteTrack.update()
-                            #   3. Draw bounding boxes / track IDs → annotated_arr
-                            #   4. Log to Turso:
-                            #        camera_id, timestamp, bbox_json, class_id, track_id
-                            #
-                            # Outputs:
-                            #   - annotated_arr: np.ndarray (pass to chunker)
-                            # ═══════════════════════════════════════════════════
-                            annotated_arr = arr  # placeholder — replace with YOLO output
+                            annotated_arr = arr  # placeholder
                             # ═══════════════════════════════════════════════════
 
                             ts = datetime.utcnow()
@@ -243,11 +273,15 @@ class StreamWorker(threading.Thread):
                         pass
                     with self._lock:
                         self._container = None
+                    _report_status(self.camera_id, "disconnected")
+                    _log_to_turso(self.camera_id, "", "disconnected")
 
             except Exception as e:
                 if self._stop_event.is_set():
                     break
                 print(f"{log_prefix} error: {e}")
+                _report_status(self.camera_id, "disconnected")
+                _log_to_turso(self.camera_id, "", "disconnected")
                 time.sleep(5)
 
         # final flush on thread exit

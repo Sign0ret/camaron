@@ -13,7 +13,7 @@
 ### Build the Admin web app
 
 **Current state:**
-- `apps/web` exists as a default Next.js project (App Router).
+  - `apps/admin` exists as the admin dashboard (Next.js App Router).
 - No camera-related UI yet.
 
 **Goal:**
@@ -29,7 +29,7 @@
 - Real-time updates: WebSocket/SSE, or just poll `/cameras` every few seconds?
 
 **Rough plan:**
-1. Scaffold the admin UI in `apps/web`.
+1. Scaffold the admin UI in `apps/admin`.
 2. Create a cameras list page (`/cameras`) that fetches from the orchestrator.
 3. Add a register form (`POST /cameras`).
 4. Display the latest recording per camera (R2 URL).

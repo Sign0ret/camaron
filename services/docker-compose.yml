@@ -6,15 +6,21 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
+      - TURSO_DATABASE_URL=${TURSO_DATABASE_URL}
+      - TURSO_AUTH_TOKEN=${TURSO_AUTH_TOKEN}
+      - ORCHESTRATOR_API_KEY=${ORCHESTRATOR_API_KEY}
 
   inference:
     build:
       context: inference
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
+      - ORCHESTRATOR_API_KEY=${ORCHESTRATOR_API_KEY}
       - OUTPUT_DIR=/data/snapshots
       - POLL_INTERVAL=10
       - SAMPLE_INTERVAL=1.0
+      - TURSO_DATABASE_URL=${TURSO_DATABASE_URL}
+      - TURSO_AUTH_TOKEN=${TURSO_AUTH_TOKEN}
     volumes:
       - ./data/snapshots:/data/snapshots
     depends_on:

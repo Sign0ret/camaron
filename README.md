@@ -5,8 +5,22 @@ Stream any camera to a VPS. Frames are buffered in memory and flushed as 5-secon
 ## What you need
 
 - A VPS (Ubuntu + Docker)
-- A Mac with `ffmpeg` installed: `brew install ffmpeg`
+- A Turso database account ([turso.tech](https://turso.tech))
 - A Cloudflare R2 bucket + API token
+- A Mac with `ffmpeg` installed: `brew install ffmpeg`
+- Vercel account for the admin dashboard
+
+## Architecture
+
+```
+Mac ffmpeg → VPS MediaMTX (8554) → inference worker → R2 MP4 chunks
+                                ↘ orchestrator (8080) ← Turso DB ← API ← Admin (Vercel)
+```
+
+- **orchestrator** (Go, port 8080): camera registry REST API backed by Turso
+- **mediamtx** (port 8554): RTSP server that receives the ffmpeg push
+- **inference** (Python + PyAV): buffers decoded frames, flushes 5-second MP4 chunks, uploads to R2
+- **admin** (Next.js, Vercel): dashboard to manage cameras and view recordings
 
 ## Setup
 
@@ -17,22 +31,48 @@ scp scripts/vps-init.sh root@YOUR_VPS_IP:/root/vps-init.sh
 ssh root@YOUR_VPS_IP "bash /root/vps-init.sh"
 ```
 
-### 2. Add R2 credentials to GitHub
+### 2. Add credentials to GitHub Secrets
 
 Go to `Settings → Secrets and variables → Actions` in your repo and add:
 
+**Backend & R2:**
 - `R2_BUCKET_NAME`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
-- `R2_ENDPOINT_URL` (format: `https://<account_id>.r2.cloudflarestorage.com`)
+- `R2_ENDPOINT_URL`
+- `R2_PUBLIC_URL` (public bucket URL for viewing recordings in admin)
+- `ORCHESTRATOR_API_KEY` (protects register/delete/status endpoints)
 
-### 3. Deploy
+**Turso DB:**
+- `TURSO_DATABASE_URL` (e.g. `libsql://camaron-username.turso.io`)
+- `TURSO_AUTH_TOKEN`
+
+**VPS Deploy:**
+- `VPS_HOST`
+- `VPS_USER`
+- `VPS_SSH_KEY`
+- `GHCR_TOKEN`
+
+**Admin (Vercel):**
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
+> The admin dashboard automatically derives `ORCHESTRATOR_URL` from `VPS_HOST` (`http://<VPS_HOST>:8080`). No need to set it manually.
+
+### 3. Apply Turso schema
+
+```bash
+turso db shell <your-db-name> < packages/turso/schema.sql
+```
+
+### 4. Deploy
 
 ```bash
 git push origin main
 ```
 
-GitHub Actions builds images and deploys to the VPS automatically. The `.env` file is written from secrets on every deploy.
+GitHub Actions builds images, deploys backend to the VPS, and deploys admin to Vercel.
 
 Verify the stack is up:
 
@@ -45,11 +85,7 @@ ssh root@YOUR_VPS_IP "curl -s http://localhost:8080/health"
 
 ## Add a camera
 
-Two steps: stream to the VPS, then register it.
-
-### Step A — Stream
-
-Run this on your Mac. Replace `CAMERA_ID` with any name you want (e.g., `macbook`, `livingroom`, `garage`):
+### Option A: Mac webcam (local dev)
 
 ```bash
 ffmpeg -re -f avfoundation -framerate 30 -video_size 1280x720 -pix_fmt yuv420p -i "0" \
@@ -58,11 +94,7 @@ ffmpeg -re -f avfoundation -framerate 30 -video_size 1280x720 -pix_fmt yuv420p -
   -f rtsp rtsp://YOUR_VPS_IP:8554/CAMERA_ID
 ```
 
-Keep this terminal open. `ffmpeg` is now pushing your camera to the VPS MediaMTX server.
-
-### Step B — Register
-
-Tell the orchestrator about this camera so the inference worker starts pulling it:
+Then register it:
 
 ```bash
 curl -X POST http://YOUR_VPS_IP:8080/cameras \
@@ -70,64 +102,57 @@ curl -X POST http://YOUR_VPS_IP:8080/cameras \
   -d '{"id":"CAMERA_ID","url":"rtsp://mediamtx:8554/CAMERA_ID"}'
 ```
 
-Replace `CAMERA_ID` with the same name you used in the ffmpeg command.
+### Option B: Remote IP camera with Pi bridge
 
-**Verify registration:**
+See `hardware/pi-bridge/` for the full Raspberry Pi Zero 2 W setup guide.
 
-```bash
-curl http://YOUR_VPS_IP:8080/cameras
-# → [{"id":"CAMERA_ID","url":"rtsp://mediamtx:8554/CAMERA_ID"}]
-```
+### Option C: Admin dashboard
 
-### Step C — Confirm in logs
-
-Watch the inference worker pick up the new camera in real time:
-
-```bash
-ssh root@YOUR_VPS_IP "docker logs -f camaron-inference-1"
-```
-
-You should see within ~10 seconds:
-
-```
-[pool] starting camera CAMERA_ID
-[CAMERA_ID] connected to rtsp://mediamtx:8554/CAMERA_ID
-[CAMERA_ID] encoded /tmp/chunk_CAMERA_ID_20240115_143000.mp4 (5 frames @ 1fps)
-[CAMERA_ID] uploaded r2://BUCKET/CAMERA_ID/chunk_CAMERA_ID_20240115_143000.mp4
-```
-
-A new `.mp4` file appears in R2 every ~5 seconds.
+Open your Vercel admin URL, go to `/cameras`, and use the register form.
 
 ---
 
-## Delete a camera
+## Local Development
 
-Stop the ffmpeg stream on your Mac, then:
+Run the stack locally without a VPS:
+
+### 1. Set env vars
 
 ```bash
-curl -X DELETE http://YOUR_VPS_IP:8080/cameras/CAMERA_ID
+cp .env.example .env
+# Edit .env with your Turso and R2 credentials
 ```
 
-The inference worker will stop automatically on the next poll.
+### 2. Start backend services
 
----
-
-## View recordings
-
-Open your Cloudflare R2 dashboard. Each camera has its own folder (`CAMERA_ID/`) containing `.mp4` files named by timestamp.
-
----
-
-## Architecture
-
-```
-Mac ffmpeg → VPS MediaMTX (8554) → inference worker → R2 MP4 chunks
-                                ↘ orchestrator (8080) ← API
+```bash
+cd services && docker compose up --build
 ```
 
-- **orchestrator** (Go, port 8080): camera registry REST API
-- **mediamtx** (port 8554): RTSP server that receives the ffmpeg push
-- **inference** (Python + PyAV): buffers decoded frames in memory, flushes a 5-second MP4 chunk every 5 seconds, uploads to R2
+This brings up orchestrator (8080), MediaMTX (8554), and inference.
+
+### 3. Start admin dashboard
+
+```bash
+cd apps/admin && pnpm dev
+```
+
+Admin runs on `http://localhost:3000`.
+
+### 4. Register a local camera
+
+```bash
+# Stream your Mac webcam
+ffmpeg -re -f avfoundation -framerate 30 -video_size 1280x720 -pix_fmt yuv420p -i "0" \
+  -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+  -rtsp_transport tcp \
+  -f rtsp rtsp://localhost:8554/macbook
+
+# Register it
+curl -X POST http://localhost:8080/cameras \
+  -H "Content-Type: application/json" \
+  -d '{"id":"macbook","url":"rtsp://mediamtx:8554/macbook"}'
+```
 
 ---
 
@@ -140,6 +165,9 @@ Mac ffmpeg → VPS MediaMTX (8554) → inference worker → R2 MP4 chunks
 | `/cameras` | `POST` | `{"id":"x","url":"rtsp://..."}` | Register a camera |
 | `/cameras/{id}` | `GET` | — | Get one camera |
 | `/cameras/{id}` | `DELETE` | — | Remove a camera |
+| `/camera-status` | `GET` | — | Get all camera statuses |
+| `/camera-status` | `POST` | `{"id":"x","event":"chunk_uploaded"}` | Report camera event |
+| `/recordings/{id}` | `GET` | `?limit=50` | Get recordings for a camera |
 
 ---
 
@@ -152,19 +180,26 @@ Mac ffmpeg → VPS MediaMTX (8554) → inference worker → R2 MP4 chunks
 | No `starting camera` in logs | Wait 10s for poll interval. Verify with `curl /cameras`. |
 | `r2 upload failed` | Check `.env` on VPS (`cat /opt/camaron/.env`) and GitHub Secrets are correct. |
 | Port 8554 refused | Open port 8554 in VPS firewall (`ufw allow 8554`) and cloud provider security group. |
+| Turso connection failed | Verify `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set and the schema is applied. |
 
 ---
 
-## Local Development
+## Project Structure
 
-Run the stack locally without a VPS:
-
-```bash
-cd services && docker compose up -d orchestrator mediamtx
-curl -X POST http://localhost:8080/cameras \
-  -H "Content-Type: application/json" \
-  -d '{"id":"macbook","url":"device://0"}'
-cd services/inference && ./run-local.sh
 ```
-
-See `services/docker-compose.yml` for the local stack and `services/docker-compose.prod.yml` for the VPS stack.
+├── apps/
+│   ├── admin/              ← Next.js admin dashboard (Vercel)
+│   └── docs/
+├── packages/
+│   ├── turso/              ← DB schema + Go/Python clients
+│   ├── typescript-config/
+│   └── ui/
+├── services/
+│   ├── orchestrator/         ← Go REST API (VPS Docker)
+│   ├── inference/            ← Python worker (VPS Docker)
+│   ├── docker-compose.yml    ← Local stack
+│   └── docker-compose.prod.yml ← VPS stack
+├── hardware/
+│   └── pi-bridge/          ← Raspberry Pi setup guide
+└── .github/workflows/ci.yml  ← GitHub Actions CI/CD
+```
