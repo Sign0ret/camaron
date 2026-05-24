@@ -70,49 +70,28 @@
 
 ---
 
-## 🟢 Tier 1: Reliability
+## 🔵 Tier 3: Product / Admin UX
 
 | # | Task | Why | Status |
 |---|---|------|--------|
-| ~~1.1~~ | ~~Add Docker resource limits (`cpus`, `memory`) to the inference container.~~ | ~~Prevents runaway CPU or RAM usage from starving the OS / orchestrator / MediaMTX.~~ | ✅ Done |
-| ~~1.2~~ | ~~Add a healthcheck to the inference container.~~ | ~~Docker can now auto-restart a hung or deadlocked worker.~~ | ✅ Done |
-| ~~1.3~~ | ~~Stagger chunk flush windows — add a small per-camera random jitter to `chunk_sec`.~~ | ~~Prevents thundering herd where all cameras encode/upload simultaneously every 5 seconds.~~ | ✅ Done |
-| ~~1.4~~ | ~~Retry failed R2 uploads with exponential backoff.~~ | ~~Prevents permanent recording loss on transient network hiccups.~~ | ✅ Done |
-
----
-
-## 🟡 Tier 2: Scale (More Cameras on the Same CCX13)
-
-| # | Task | Why |
-|---|------|-----|
-| 2.1 | **Offload MP4 encoding to a `ThreadPoolExecutor`.** | `libx264` encoding blocks the RTSP reader thread. Parallel encode lets the decoder keep pulling frames while flushing happens in the background. |
-| 2.2 | **Shard cameras across two inference replicas.** | Python's GIL wastes the second vCPU. Two inference containers with hash-based camera-ID sharding would double CPU utilization on a 2-core box. |
-| 2.3 | **Make resolution configurable per camera** (default 640×480 instead of hardcoded 1280×720). | 480p cuts decode + encode CPU by ~60% and RAM per camera from ~90 MB to ~40 MB. |
-
----
-
-## 🔵 Tier 3: Product / Admin UX
-
-| # | Task | Why |
-|---|------|-----|
-| 3.1 | **Auto-refresh camera status** — lightweight polling or SSE on the dashboard. | The admin dashboard is static SSR today. No live visibility into online/offline changes without a manual page reload. |
-| 3.2 | **Inline video player for recordings.** | Recordings are currently just raw R2 links. An HTML5 `<video>` tag on the camera detail page would let users watch directly in the dashboard. |
-| 3.3 | **Basic auth / password protection for the admin dashboard.** | Orchestrator mutations are protected by `X-API-Key`, but the Vercel-hosted dashboard is completely open to the public. |
-| 3.4 | **Live stream preview on camera detail page.** | MediaMTX exposes the RTSP stream. A snapshot or lightweight HLS player on the detail page would be a valuable UX addition. |
+| 3.1 | **Auto-refresh camera status** — lightweight polling or SSE on the dashboard. | The admin dashboard is static SSR today. No live visibility into online/offline changes without a manual page reload. | ⏳ Pending |
+| 3.2 | **Inline video player for recordings.** | Recordings are currently just raw R2 links. An HTML5 `<video>` tag on the camera detail page would let users watch directly in the dashboard. | ⏳ Pending |
+| 3.3 | **Basic auth / password protection for the admin dashboard.** | Orchestrator mutations are protected by `X-API-Key`, but the Vercel-hosted dashboard is completely open to the public. | ⏳ Pending |
+| 3.4 | **Live stream preview on camera detail page.** | MediaMTX exposes the RTSP stream. A snapshot or lightweight HLS player on the detail page would be a valuable UX addition. | ⏳ Pending |
 
 ---
 
 ## 🔴 Tier 4: Future / Outgrow the CCX13
 
-| # | Task | Why |
-|---|------|-----|
-| 4.1 | **Add a Prometheus-style metrics endpoint.** | Expose active cameras, chunk latency, upload failures, RAM usage, etc. You cannot see when you're hitting capacity limits today. |
-| 4.2 | **Move inference off the VPS to a dedicated worker or GPU box.** | The VPS becomes a lightweight RTSP relay + API. Inference scales independently on a beefier machine. |
-| 4.3 | **Implement the YOLO + ByteTrack inference pipeline.** | Placeholder exists in `services/inference/main.py`, but this would require a GPU and completely change the per-camera resource math. |
+| # | Task | Why | Status |
+|---|---|------|--------|
+| 4.1 | **Add a Prometheus-style metrics endpoint.** | Expose active cameras, chunk latency, upload failures, RAM usage, etc. You cannot see when you're hitting capacity limits today. | ⏳ Pending |
+| 4.2 | **Move inference off the VPS to a dedicated worker or GPU box.** | The VPS becomes a lightweight RTSP relay + API. Inference scales independently on a beefier machine. | ⏳ Pending |
+| 4.3 | **Implement the YOLO + ByteTrack inference pipeline.** | Placeholder exists in `services/inference/main.py`, but this would require a GPU and completely change the per-camera resource math. | ⏳ Pending |
 
 ---
 
 ## Notes
 - Keep infra minimal. One README, one flow.
 - Do not over-engineer auth or caching until explicitly needed.
-- The current architecture comfortably supports **15–25 cameras** on a Hetzner CCX13 after the decode-skip optimization.
+- The current architecture comfortably supports **40–50 cameras** on a Hetzner CCX13 after all Tier 1 and Tier 2 optimizations.

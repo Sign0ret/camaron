@@ -66,6 +66,11 @@ Go to `Settings → Secrets and variables → Actions` in your repo and add:
 turso db shell <your-db-name> < packages/turso/schema.sql
 ```
 
+> If the `cameras` table already exists without the `resolution` column, run:
+> ```bash
+> turso db shell <your-db-name> "ALTER TABLE cameras ADD COLUMN resolution TEXT DEFAULT '640x480';"
+> ```
+
 ### 4. Deploy
 
 ```bash
@@ -85,30 +90,62 @@ ssh root@YOUR_VPS_IP "curl -s http://localhost:8080/health"
 
 ## Add a camera
 
-### Option A: Mac webcam (local dev)
+### Option A: Admin dashboard (recommended)
+
+1. Open your Vercel admin URL and go to `/cameras`.
+2. Fill the **Register new camera** form:
+   - **Camera ID:** any unique name (e.g., `macbook`, `backyard`)
+   - **Stream URL:** `rtsp://mediamtx:8554/YOUR_CAMERA_ID`
+   - **Resolution:** `640×480` (default, lower CPU/RAM) or `1280×720` (higher quality, more CPU)
+3. Click **Register camera**.
+4. The camera appears in the list as **offline** until you start streaming (see below).
+
+### Option B: Real Mac webcam
 
 ```bash
-ffmpeg -re -f avfoundation -framerate 30 -video_size 1280x720 -pix_fmt yuv420p -i "0" \
+ffmpeg -re -f avfoundation -framerate 30 -video_size 640x480 -pix_fmt yuv420p -i "0" \
   -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
   -rtsp_transport tcp \
   -f rtsp rtsp://YOUR_VPS_IP:8554/CAMERA_ID
 ```
 
-Then register it:
+> **Note:** The `-video_size` should match the resolution you selected in the admin panel. Default is `640x480`.
+
+### Option C: Fake / test stream (no camera needed)
+
+Useful for testing the pipeline on a machine without a physical camera:
+
+```bash
+ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=30 \
+  -pix_fmt yuv420p -c:v libx264 -preset ultrafast -tune zerolatency \
+  -rtsp_transport tcp \
+  -f rtsp rtsp://YOUR_VPS_IP:8554/CAMERA_ID
+```
+
+This generates a synthetic color bars pattern indefinitely.
+
+### Option D: Register via API (curl)
 
 ```bash
 curl -X POST http://YOUR_VPS_IP:8080/cameras \
   -H "Content-Type: application/json" \
-  -d '{"id":"CAMERA_ID","url":"rtsp://mediamtx:8554/CAMERA_ID"}'
+  -H "X-API-Key: $ORCHESTRATOR_API_KEY" \
+  -d '{"id":"CAMERA_ID","url":"rtsp://mediamtx:8554/CAMERA_ID","resolution":"640x480"}'
 ```
 
-### Option B: Remote IP camera with Pi bridge
+### Option E: Remote IP camera with Pi bridge
 
 See `hardware/pi-bridge/` for the full Raspberry Pi Zero 2 W setup guide.
 
-### Option C: Admin dashboard
+---
 
-Open your Vercel admin URL, go to `/cameras`, and use the register form.
+## How the flow works
+
+1. **Register** the camera in the admin panel (or via curl).
+2. **Start ffmpeg** on the source device to push the stream to the VPS.
+3. The **inference worker** polls the orchestrator every 10s, sees the new camera, and opens the RTSP stream.
+4. Frames are **sampled at 1 fps**, buffered in memory, and flushed as a **5-second MP4 chunk** to R2.
+5. The **admin dashboard** shows the camera as **online** and recordings appear in the camera detail page.
 
 ---
 
@@ -142,16 +179,16 @@ Admin runs on `http://localhost:3000`.
 ### 4. Register a local camera
 
 ```bash
-# Stream your Mac webcam
-ffmpeg -re -f avfoundation -framerate 30 -video_size 1280x720 -pix_fmt yuv420p -i "0" \
-  -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+# Stream a fake test pattern (no camera needed)
+ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=30 \
+  -pix_fmt yuv420p -c:v libx264 -preset ultrafast -tune zerolatency \
   -rtsp_transport tcp \
-  -f rtsp rtsp://localhost:8554/macbook
+  -f rtsp rtsp://localhost:8554/testcam
 
 # Register it
 curl -X POST http://localhost:8080/cameras \
   -H "Content-Type: application/json" \
-  -d '{"id":"macbook","url":"rtsp://mediamtx:8554/macbook"}'
+  -d '{"id":"testcam","url":"rtsp://mediamtx:8554/testcam","resolution":"640x480"}'
 ```
 
 ---
@@ -162,12 +199,14 @@ curl -X POST http://localhost:8080/cameras \
 |---|---|---|---|
 | `/health` | `GET` | — | Health check |
 | `/cameras` | `GET` | — | List all cameras |
-| `/cameras` | `POST` | `{"id":"x","url":"rtsp://..."}` | Register a camera |
+| `/cameras` | `POST` | `{"id":"x","url":"rtsp://...","resolution":"640x480"}` | Register a camera |
 | `/cameras/{id}` | `GET` | — | Get one camera |
 | `/cameras/{id}` | `DELETE` | — | Remove a camera |
 | `/camera-status` | `GET` | — | Get all camera statuses |
 | `/camera-status` | `POST` | `{"id":"x","event":"chunk_uploaded"}` | Report camera event |
 | `/recordings/{id}` | `GET` | `?limit=50` | Get recordings for a camera |
+
+> `POST /cameras` requires `X-API-Key` header if `ORCHESTRATOR_API_KEY` is set.
 
 ---
 
@@ -176,11 +215,13 @@ curl -X POST http://localhost:8080/cameras \
 | Problem | Fix |
 |---|---|
 | `404 Not Found` in inference logs | ffmpeg is not connected. Check ffmpeg is running and the `CAMERA_ID` matches exactly between ffmpeg path and POST body. |
+| `Invalid data found when processing input` | Camera URL has a trailing space. Delete + re-register without whitespace. |
 | `broken pipe` in ffmpeg | Add `-re` flag so ffmpeg does not flood the server. |
 | No `starting camera` in logs | Wait 10s for poll interval. Verify with `curl /cameras`. |
 | `r2 upload failed` | Check `.env` on VPS (`cat /opt/camaron/.env`) and GitHub Secrets are correct. |
 | Port 8554 refused | Open port 8554 in VPS firewall (`ufw allow 8554`) and cloud provider security group. |
 | Turso connection failed | Verify `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set and the schema is applied. |
+| Camera offline in dashboard but ffmpeg running | Wait 10–15 seconds for inference poll loop. Check `docker logs camaron-inference-1`. |
 
 ---
 
@@ -191,7 +232,7 @@ curl -X POST http://localhost:8080/cameras \
 │   ├── admin/              ← Next.js admin dashboard (Vercel)
 │   └── docs/
 ├── packages/
-│   ├── turso/              ← DB schema + Go/Python clients
+│   ├── turso/              ← DB schema + Go/Python/TS clients
 │   ├── typescript-config/
 │   └── ui/
 ├── services/
