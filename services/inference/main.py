@@ -1,9 +1,11 @@
+import json
 import os
 import platform
 import time
 import threading
 from datetime import datetime
 from fractions import Fraction
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import av
 import numpy as np
@@ -297,6 +299,31 @@ class StreamWorker(threading.Thread):
         self._chunker.stop()
 
 
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok"}).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # silence built-in logging
+
+
+def _start_health_server(port: int = 8081):
+    def run():
+        server = HTTPServer(("", port), _HealthHandler)
+        server.serve_forever()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    print(f"[health] listening on :{port}")
+
+
 class WorkerPool:
     def __init__(self):
         self._workers: dict[str, StreamWorker] = {}
@@ -322,6 +349,7 @@ class WorkerPool:
 
 
 def main():
+    _start_health_server()
     pool = WorkerPool()
 
     while True:
