@@ -19,7 +19,7 @@ export default function CameraList({
   const [cameras, setCameras] = useState<Camera[]>(initialCameras);
   const [statuses, setStatuses] =
     useState<Record<string, CameraStatus>>(initialStatuses);
-  const [form, setForm] = useState({ id: '', url: '' });
+  const [form, setForm] = useState({ id: '', url: '', resolution: '640x480' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -41,9 +41,9 @@ export default function CameraList({
     setError('');
     setSuccess('');
     try {
-      await registerCamera(form.id, form.url);
+      await registerCamera(form.id, form.url, form.resolution);
       setSuccess(`Camera "${form.id}" registered.`);
-      setForm({ id: '', url: '' });
+      setForm({ id: '', url: '', resolution: '640x480' });
       await refresh();
     } catch (err) {
       setError(
@@ -110,6 +110,17 @@ export default function CameraList({
             required
           />
         </div>
+        <div className="form-group">
+          <label htmlFor="resolution">Resolution</label>
+          <select
+            id="resolution"
+            value={form.resolution}
+            onChange={(e) => setForm((f) => ({ ...f, resolution: e.target.value }))}
+          >
+            <option value="640x480">640×480 (SD, less CPU)</option>
+            <option value="1280x720">1280×720 (HD, more CPU)</option>
+          </select>
+        </div>
         <button type="submit" className="btn btn-primary" disabled={loading}>
           {loading ? 'Registering...' : 'Register camera'}
         </button>
@@ -123,6 +134,7 @@ export default function CameraList({
           <thead>
             <tr>
               <th>ID</th>
+              <th>Resolution</th>
               <th>Status</th>
               <th>Recordings</th>
               <th>Last seen</th>
@@ -142,6 +154,7 @@ export default function CameraList({
                       {cam.url}
                     </div>
                   </td>
+                  <td>{cam.resolution || '640x480'}</td>
                   <td>
                     {status?.online ? (
                       <span className="badge badge-online">online</span>

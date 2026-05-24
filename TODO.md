@@ -35,6 +35,39 @@
 - `time.sleep()` yields CPU to other threads during backoff, so retries don't burn cycles.
 - Prevents permanent recording loss on transient network hiccups.
 
+### ThreadPoolExecutor for MP4 encoding (Tier 2.1)
+- Added module-level `ThreadPoolExecutor(max_workers=2)` to offload `libx264` encode + R2 upload.
+- Reader thread copies the buffer and returns immediately — no frame drops during flush.
+- Added SIGTERM/SIGINT handler with graceful `_ENCODE_POOL.shutdown(wait=True)`.
+
+### Configurable per-camera resolution (Tier 2.3)
+- Added `resolution` column to `cameras` table with default `640x480`.
+- Updated orchestrator API to accept and store resolution on `POST /cameras`.
+- Inference worker reads resolution from stream config and passes it to `open_input()` for local devices.
+- Admin dashboard shows resolution in list/detail and provides a dropdown (640×480 / 1280×720) on register.
+- Default is 640×480 for lower CPU/RAM footprint; users can opt into 1280×720 per camera.
+
+---
+
+## 🟢 Tier 1: Reliability
+
+| # | Task | Why | Status |
+|---|---|------|--------|
+| ~~1.1~~ | ~~Add Docker resource limits (`cpus`, `memory`) to the inference container.~~ | ~~Prevents runaway CPU or RAM usage from starving the OS / orchestrator / MediaMTX.~~ | ✅ Done |
+| ~~1.2~~ | ~~Add a healthcheck to the inference container.~~ | ~~Docker can now auto-restart a hung or deadlocked worker.~~ | ✅ Done |
+| ~~1.3~~ | ~~Stagger chunk flush windows — add a small per-camera random jitter to `chunk_sec`.~~ | ~~Prevents thundering herd where all cameras encode/upload simultaneously every 5 seconds.~~ | ✅ Done |
+| ~~1.4~~ | ~~Retry failed R2 uploads with exponential backoff.~~ | ~~Prevents permanent recording loss on transient network hiccups.~~ | ✅ Done |
+
+---
+
+## 🟡 Tier 2: Scale (More Cameras on the Same CCX13)
+
+| # | Task | Why | Status |
+|---|---|------|--------|
+| ~~2.1~~ | ~~Offload MP4 encoding to a `ThreadPoolExecutor`.~~ | ~~Reader thread never blocks on encode/upload.~~ | ✅ Done |
+| ~~2.2~~ | ~~Shard cameras across two inference replicas.~~ | ~~Skipped — unnecessary complexity for current camera count. Revisit if scaling beyond 40 cameras without VPS upgrade.~~ | ⏭️ Skipped |
+| ~~2.3~~ | ~~Make resolution configurable per camera (default 640×480).~~ | ~~480p cuts decode + encode CPU by ~60% and RAM from ~90 MB to ~40 MB per camera.~~ | ✅ Done |
+
 ---
 
 ## 🟢 Tier 1: Reliability

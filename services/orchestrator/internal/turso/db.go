@@ -16,9 +16,10 @@ type DB struct {
 
 // CameraConfig mirrors the cameras table.
 type CameraConfig struct {
-	ID        string    `json:"id"`
-	URL       string    `json:"url"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	URL        string    `json:"url"`
+	Resolution string    `json:"resolution"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // CameraStatus mirrors the camera_status table.
@@ -65,8 +66,10 @@ func (db *DB) Migrate() error {
 CREATE TABLE IF NOT EXISTS cameras (
     id TEXT PRIMARY KEY,
     url TEXT NOT NULL,
+    resolution TEXT DEFAULT '640x480',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE cameras ADD COLUMN resolution TEXT DEFAULT '640x480';
 
 CREATE TABLE IF NOT EXISTS camera_status (
     camera_id TEXT PRIMARY KEY,
@@ -93,8 +96,11 @@ CREATE INDEX IF NOT EXISTS idx_recordings_time ON recordings(recorded_at);
 }
 
 // AddCamera inserts a new camera.
-func (db *DB) AddCamera(id, url string) error {
-	_, err := db.conn.Exec("INSERT INTO cameras (id, url) VALUES (?, ?)", id, url)
+func (db *DB) AddCamera(id, url, resolution string) error {
+	if resolution == "" {
+		resolution = "640x480"
+	}
+	_, err := db.conn.Exec("INSERT INTO cameras (id, url, resolution) VALUES (?, ?, ?)", id, url, resolution)
 	if err != nil {
 		return fmt.Errorf("insert camera: %w", err)
 	}
@@ -115,8 +121,8 @@ func (db *DB) RemoveCamera(id string) error {
 // GetCamera fetches a single camera.
 func (db *DB) GetCamera(id string) (CameraConfig, error) {
 	var cfg CameraConfig
-	row := db.conn.QueryRow("SELECT id, url, created_at FROM cameras WHERE id = ?", id)
-	err := row.Scan(&cfg.ID, &cfg.URL, &cfg.CreatedAt)
+	row := db.conn.QueryRow("SELECT id, url, resolution, created_at FROM cameras WHERE id = ?", id)
+	err := row.Scan(&cfg.ID, &cfg.URL, &cfg.Resolution, &cfg.CreatedAt)
 	if err == sql.ErrNoRows {
 		return cfg, fmt.Errorf("camera not found")
 	}
@@ -128,7 +134,7 @@ func (db *DB) GetCamera(id string) (CameraConfig, error) {
 
 // ListCameras returns all cameras.
 func (db *DB) ListCameras() ([]CameraConfig, error) {
-	rows, err := db.conn.Query("SELECT id, url, created_at FROM cameras ORDER BY created_at DESC")
+	rows, err := db.conn.Query("SELECT id, url, resolution, created_at FROM cameras ORDER BY created_at DESC")
 	if err != nil {
 		return nil, fmt.Errorf("query cameras: %w", err)
 	}
@@ -137,7 +143,7 @@ func (db *DB) ListCameras() ([]CameraConfig, error) {
 	var out []CameraConfig
 	for rows.Next() {
 		var cfg CameraConfig
-		if err := rows.Scan(&cfg.ID, &cfg.URL, &cfg.CreatedAt); err != nil {
+		if err := rows.Scan(&cfg.ID, &cfg.URL, &cfg.Resolution, &cfg.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, cfg)

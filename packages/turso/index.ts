@@ -19,6 +19,7 @@ export function getTursoClient(): Client {
 export interface Camera {
   id: string;
   url: string;
+  resolution?: string;
   created_at: string;
 }
 
@@ -38,19 +39,20 @@ export interface Recording {
 
 export async function listCameras(): Promise<Camera[]> {
   const db = getTursoClient();
-  const rs = await db.execute("SELECT id, url, created_at FROM cameras ORDER BY created_at DESC");
+  const rs = await db.execute("SELECT id, url, resolution, created_at FROM cameras ORDER BY created_at DESC");
   return rs.rows.map((r) => ({
     id: r.id as string,
     url: r.url as string,
+    resolution: (r.resolution as string) || undefined,
     created_at: r.created_at as string,
   }));
 }
 
-export async function addCamera(id: string, url: string): Promise<void> {
+export async function addCamera(id: string, url: string, resolution: string = '640x480'): Promise<void> {
   const db = getTursoClient();
   await db.execute({
-    sql: "INSERT INTO cameras (id, url) VALUES (?, ?)",
-    args: [id, url],
+    sql: "INSERT INTO cameras (id, url, resolution) VALUES (?, ?, ?)",
+    args: [id, url, resolution],
   });
   await db.execute({
     sql: "INSERT INTO camera_status (camera_id, online) VALUES (?, 0)",

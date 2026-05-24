@@ -9,9 +9,10 @@ import (
 
 // CameraConfig holds the metadata for a single camera stream.
 type CameraConfig struct {
-	ID        string    `json:"id"`
-	URL       string    `json:"url"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
+	ID         string    `json:"id"`
+	URL        string    `json:"url"`
+	Resolution string    `json:"resolution,omitempty"`
+	CreatedAt  time.Time `json:"created_at,omitempty"`
 }
 
 // CameraStatus tracks runtime health and activity for a camera.
@@ -40,7 +41,7 @@ func NewCameraManager(db *turso.DB) *CameraManager {
 }
 
 func (m *CameraManager) Add(cfg CameraConfig) error {
-	return m.db.AddCamera(cfg.ID, cfg.URL)
+	return m.db.AddCamera(cfg.ID, cfg.URL, cfg.Resolution)
 }
 
 func (m *CameraManager) Remove(id string) error {
@@ -52,7 +53,7 @@ func (m *CameraManager) Get(id string) (CameraConfig, bool) {
 	if err != nil {
 		return CameraConfig{}, false
 	}
-	return CameraConfig{ID: cfg.ID, URL: cfg.URL, CreatedAt: cfg.CreatedAt}, true
+	return CameraConfig{ID: cfg.ID, URL: cfg.URL, Resolution: cfg.Resolution, CreatedAt: cfg.CreatedAt}, true
 }
 
 func (m *CameraManager) List() []CameraConfig {
@@ -62,7 +63,7 @@ func (m *CameraManager) List() []CameraConfig {
 	}
 	out := make([]CameraConfig, 0, len(items))
 	for _, c := range items {
-		out = append(out, CameraConfig{ID: c.ID, URL: c.URL, CreatedAt: c.CreatedAt})
+		out = append(out, CameraConfig{ID: c.ID, URL: c.URL, Resolution: c.Resolution, CreatedAt: c.CreatedAt})
 	}
 	return out
 }

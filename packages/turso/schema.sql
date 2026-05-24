@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS cameras (
     id TEXT PRIMARY KEY,
     url TEXT NOT NULL,
+    resolution TEXT DEFAULT '640x480',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

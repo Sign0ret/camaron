@@ -84,6 +84,36 @@ func main() {
 		switch r.Method {
 		case http.MethodGet:
 			json.NewEncoder(w).Encode(manager.List())
+		case http.MethodPost:
+			if !checkKey(w, r) {
+				return
+			}
+			var payload struct {
+				ID         string `json:"id"`
+				URL        string `json:"url"`
+				Resolution string `json:"resolution"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+				return
+			}
+			if payload.ID == "" || payload.URL == "" {
+				http.Error(w, `{"error":"id and url required"}`, http.StatusBadRequest)
+				return
+			}
+			if payload.Resolution == "" {
+				payload.Resolution = "640x480"
+			}
+			if err := manager.Add(internal.CameraConfig{
+				ID:         payload.ID,
+				URL:        payload.URL,
+				Resolution: payload.Resolution,
+			}); err != nil {
+				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]string{"id": payload.ID})
 		case http.MethodOptions:
 			w.WriteHeader(http.StatusNoContent)
 		default:

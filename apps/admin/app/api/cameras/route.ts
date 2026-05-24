@@ -24,8 +24,8 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    await addCamera(body.id, body.url);
-    return NextResponse.json({ id: body.id, url: body.url }, { status: 201 });
+    await addCamera(body.id, body.url, body.resolution);
+    return NextResponse.json({ id: body.id, url: body.url, resolution: body.resolution }, { status: 201 });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Unknown error' },

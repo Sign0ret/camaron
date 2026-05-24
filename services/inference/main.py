@@ -1,12 +1,19 @@
+import concurrent.futures
 import json
 import os
 import platform
 import random
+import signal
 import time
 import threading
 from datetime import datetime
 from fractions import Fraction
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# Thread pool for offloading MP4 encode+upload so the RTSP reader never blocks.
+# max_workers=2 because the inference container is capped at 1.5 vCPUs;
+# libx264 releases the GIL during heavy work, so 2 threads get real parallelism.
+_ENCODE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 import av
 import numpy as np
@@ -83,14 +90,14 @@ def _log_to_turso(camera_id: str, filename: str, event: str):
         pass
 
 
-def open_input(url: str):
+def open_input(url: str, resolution: str = "640x480"):
     """Open a media input from RTSP URL or local device."""
     if url.startswith("device://"):
         device_id = url[len("device://"):]
         system = platform.system()
         if system == "Darwin":
             attempts = [
-                (f"{device_id}:none", {"framerate": "30", "video_size": "1280x720"}),
+                (f"{device_id}:none", {"framerate": "30", "video_size": resolution}),
                 (f"{device_id}:none", {}),
                 (device_id, {}),
             ]
@@ -106,7 +113,9 @@ def open_input(url: str):
                 "System Settings → Privacy & Security → Camera → Terminal (or iTerm)"
             )
         elif system == "Linux":
-            return av.open(f"/dev/video{device_id}", format="v4l2")
+            # v4l2 doesn't always respect resolution options, but we pass them anyway
+            options = {"video_size": resolution, "framerate": "30"}
+            return av.open(f"/dev/video{device_id}", format="v4l2", options=options)
         else:
             raise RuntimeError(f"Unsupported platform for device input: {system}")
     else:
@@ -125,6 +134,7 @@ class Mp4Chunker:
         self._buffer: list[tuple[datetime, np.ndarray]] = []
         self._chunk_start_ts: float | None = None
         self._lock = threading.Lock()
+        self._pending: concurrent.futures.Future | None = None
 
     def add_frame(self, ts: datetime, arr: np.ndarray):
         with self._lock:
@@ -134,13 +144,20 @@ class Mp4Chunker:
 
             elapsed = time.time() - self._chunk_start_ts
             if elapsed >= self.chunk_sec:
-                self._flush()
+                self._flush(async_encode=True)
 
     def stop(self):
         with self._lock:
-            self._flush()
+            # Wait for any in-flight encode before final flush
+            if self._pending is not None:
+                try:
+                    self._pending.result(timeout=10)
+                except Exception:
+                    pass
+                self._pending = None
+            self._flush(async_encode=False)
 
-    def _flush(self):
+    def _flush(self, async_encode: bool = False):
         if not self._buffer:
             return
 
@@ -151,7 +168,23 @@ class Mp4Chunker:
             self._chunk_start_ts = None
             return
 
-        tmp_path = self._encode_mp4()
+        frames = list(self._buffer)
+        self._buffer = []
+        self._chunk_start_ts = None
+
+        if async_encode:
+            # Don't overlap encode tasks for the same camera
+            if self._pending is not None and not self._pending.done():
+                try:
+                    self._pending.result(timeout=10)
+                except Exception:
+                    pass
+            self._pending = _ENCODE_POOL.submit(self._flush_sync, frames)
+        else:
+            self._flush_sync(frames)
+
+    def _flush_sync(self, frames: list[tuple[datetime, np.ndarray]]):
+        tmp_path = self._encode_mp4(frames)
         if tmp_path:
             self._upload_mp4_to_r2(tmp_path)
             try:
@@ -159,16 +192,13 @@ class Mp4Chunker:
             except OSError:
                 pass
 
-        self._buffer = []
-        self._chunk_start_ts = None
-
-    def _encode_mp4(self) -> str | None:
-        ts_str = self._buffer[0][0].strftime("%Y%m%d_%H%M%S")
+    def _encode_mp4(self, frames: list[tuple[datetime, np.ndarray]]) -> str | None:
+        ts_str = frames[0][0].strftime("%Y%m%d_%H%M%S")
         tmp_path = f"/tmp/chunk_{self.camera_id}_{ts_str}.mp4"
 
         fps = round(1.0 / SAMPLE_INTERVAL)
-        width = self._buffer[0][1].shape[1]
-        height = self._buffer[0][1].shape[0]
+        width = frames[0][1].shape[1]
+        height = frames[0][1].shape[0]
 
         try:
             container = av.open(tmp_path, mode="w")
@@ -177,7 +207,7 @@ class Mp4Chunker:
             stream.height = height
             stream.pix_fmt = "yuv420p"
 
-            for _ts, arr in self._buffer:
+            for _ts, arr in frames:
                 frame = av.VideoFrame.from_ndarray(arr, format="rgb24")
                 frame = frame.reformat(format="yuv420p")
                 for packet in stream.encode(frame):
@@ -188,7 +218,7 @@ class Mp4Chunker:
                 container.mux(packet)
 
             container.close()
-            print(f"[{self.camera_id}] encoded {tmp_path} ({len(self._buffer)} frames @ {fps}fps)")
+            print(f"[{self.camera_id}] encoded {tmp_path} ({len(frames)} frames @ {fps}fps)")
             return tmp_path
 
         except Exception as e:
@@ -217,10 +247,11 @@ class Mp4Chunker:
 
 
 class StreamWorker(threading.Thread):
-    def __init__(self, camera_id: str, url: str):
+    def __init__(self, camera_id: str, url: str, resolution: str = "640x480"):
         super().__init__(daemon=True)
         self.camera_id = camera_id
         self.url = url
+        self.resolution = resolution
         self._stop_event = threading.Event()
         self._container = None
         self._lock = threading.Lock()
@@ -246,7 +277,7 @@ class StreamWorker(threading.Thread):
         while not self._stop_event.is_set():
             container = None
             try:
-                container = open_input(self.url)
+                container = open_input(self.url, self.resolution)
                 with self._lock:
                     self._container = container
                 stream = container.streams.video[0]
@@ -356,16 +387,28 @@ class WorkerPool:
                 cid = cfg["id"]
                 if cid not in self._workers:
                     print(f"[pool] starting camera {cid}")
-                    w = StreamWorker(cid, cfg["url"])
+                    resolution = cfg.get("resolution", "640x480")
+                    w = StreamWorker(cid, cfg["url"], resolution)
                     w.start()
                     self._workers[cid] = w
 
 
+_shutdown_event = threading.Event()
+
+
+def _handle_signal(signum, frame):
+    print(f"[main] received signal {signum}, shutting down gracefully...")
+    _shutdown_event.set()
+
+
 def main():
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
     _start_health_server()
     pool = WorkerPool()
 
-    while True:
+    while not _shutdown_event.is_set():
         try:
             resp = requests.get(f"{ORCHESTRATOR_URL}/stream-configs", timeout=5)
             resp.raise_for_status()
@@ -374,6 +417,11 @@ def main():
         except Exception as e:
             print(f"[main] failed to poll orchestrator: {e}")
         time.sleep(POLL_INTERVAL)
+
+    # Graceful shutdown: stop all workers and wait for pending encodes
+    print("[main] draining pending encodes...")
+    _ENCODE_POOL.shutdown(wait=True)
+    print("[main] shutdown complete")
 
 
 if __name__ == "__main__":

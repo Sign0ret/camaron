@@ -3,6 +3,7 @@ export const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || '';
 export interface Camera {
   id: string;
   url: string;
+  resolution?: string;
   created_at?: string;
 }
 
@@ -20,11 +21,15 @@ export interface Recording {
   recorded_at: string;
 }
 
-export async function registerCamera(id: string, url: string): Promise<Camera> {
+export async function registerCamera(
+  id: string,
+  url: string,
+  resolution: string = '640x480',
+): Promise<Camera> {
   const res = await fetch('/api/cameras', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, url }),
+    body: JSON.stringify({ id, url, resolution }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
