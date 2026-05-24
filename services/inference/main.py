@@ -18,6 +18,8 @@ ORCHESTRATOR_API_KEY = os.getenv("ORCHESTRATOR_API_KEY", "")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "10"))
 SAMPLE_INTERVAL = float(os.getenv("SAMPLE_INTERVAL", "1.0"))
 
+# Trigger CI rebuild after workflow filter fix
+
 # ── Cloudflare R2 config ───────────────────────────────
 R2_BUCKET = os.getenv("R2_BUCKET_NAME")
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY_ID")

@@ -25,6 +25,7 @@ jobs:
           filters: |
             services:
               - 'services/**'
+              - '.github/workflows/ci.yml'
 
   go:
     runs-on: ubuntu-latest
