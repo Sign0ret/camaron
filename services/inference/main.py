@@ -244,16 +244,23 @@ class StreamWorker(threading.Thread):
                     for packet in container.demux(stream):
                         if self._stop_event.is_set():
                             break
+
+                        now = time.time()
+
+                        # Skip decoding most packets when not ready to sample.
+                        # We still decode keyframes to keep the decoder's reference frames valid.
+                        if now - last_sample_time < SAMPLE_INTERVAL:
+                            if packet.is_keyframe:
+                                try:
+                                    for _ in packet.decode():
+                                        pass
+                                except Exception:
+                                    pass
+                            continue
+
                         for frame in packet.decode():
                             if self._stop_event.is_set():
                                 break
-
-                            # --- backpressure gate ---
-                            now = time.time()
-                            if now - last_sample_time < SAMPLE_INTERVAL:
-                                continue
-                            last_sample_time = now
-                            # -------------------------
 
                             arr = frame.to_ndarray(format="rgb24")
 
@@ -265,6 +272,8 @@ class StreamWorker(threading.Thread):
 
                             ts = datetime.utcnow()
                             self._chunker.add_frame(ts, annotated_arr)
+                            last_sample_time = now
+                            break
 
                 finally:
                     try:
