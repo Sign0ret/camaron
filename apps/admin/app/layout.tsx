@@ -27,7 +27,9 @@ export default function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <nav className="nav">
           <div className="nav-inner">
-            <Link href="/" className="nav-brand">Camaron</Link>
+            <Link href="/" className="nav-brand">
+              Camaron
+            </Link>
             <div className="nav-links">
               <Link href="/">Dashboard</Link>
               <Link href="/cameras">Cameras</Link>

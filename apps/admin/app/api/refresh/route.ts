@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
-import { listCameras, listStatuses } from "@repo/turso";
+import { listCameras, listStatuses } from '@repo/turso';
+import { NextResponse } from 'next/server';
 
 export async function POST() {
   const [cameras, statuses] = await Promise.all([

@@ -1,13 +1,13 @@
-"use client";
+'use client';
 
-import { useState } from "react";
 import {
-  registerCamera,
-  deleteCamera,
   type Camera,
   type CameraStatus,
-} from "@/lib/api";
-import Link from "next/link";
+  deleteCamera,
+  registerCamera,
+} from '@/lib/api';
+import Link from 'next/link';
+import { useState } from 'react';
 
 export default function CameraList({
   initialCameras,
@@ -17,17 +17,16 @@ export default function CameraList({
   initialStatuses: Record<string, CameraStatus>;
 }) {
   const [cameras, setCameras] = useState<Camera[]>(initialCameras);
-  const [statuses, setStatuses] = useState<Record<string, CameraStatus>>(
-    initialStatuses
-  );
-  const [form, setForm] = useState({ id: "", url: "" });
+  const [statuses, setStatuses] =
+    useState<Record<string, CameraStatus>>(initialStatuses);
+  const [form, setForm] = useState({ id: '', url: '' });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   const refresh = async () => {
     try {
-      const res = await fetch("/api/refresh", { method: "POST" });
+      const res = await fetch('/api/refresh', { method: 'POST' });
       const data = await res.json();
       setCameras(data.cameras);
       setStatuses(data.statuses);
@@ -39,15 +38,17 @@ export default function CameraList({
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
-    setSuccess("");
+    setError('');
+    setSuccess('');
     try {
       await registerCamera(form.id, form.url);
       setSuccess(`Camera "${form.id}" registered.`);
-      setForm({ id: "", url: "" });
+      setForm({ id: '', url: '' });
       await refresh();
-    } catch (err: any) {
-      setError(err.message || "Failed to register camera");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to register camera',
+      );
     } finally {
       setLoading(false);
     }
@@ -55,12 +56,12 @@ export default function CameraList({
 
   const handleDelete = async (id: string) => {
     if (!confirm(`Delete camera "${id}"?`)) return;
-    setError("");
+    setError('');
     try {
       await deleteCamera(id);
       setCameras((prev) => prev.filter((c) => c.id !== id));
-    } catch (err: any) {
-      setError(err.message || "Failed to delete camera");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete camera');
     }
   };
 
@@ -69,12 +70,12 @@ export default function CameraList({
       <h1 className="page-title">Cameras</h1>
 
       {error && (
-        <div className="error" style={{ marginBottom: "1rem" }}>
+        <div className="error" style={{ marginBottom: '1rem' }}>
           {error}
         </div>
       )}
       {success && (
-        <div className="success" style={{ marginBottom: "1rem" }}>
+        <div className="success" style={{ marginBottom: '1rem' }}>
           {success}
         </div>
       )}
@@ -82,7 +83,7 @@ export default function CameraList({
       <form
         onSubmit={handleRegister}
         className="form"
-        style={{ marginBottom: "2rem" }}
+        style={{ marginBottom: '2rem' }}
       >
         <h2 className="section-title" style={{ marginTop: 0 }}>
           Register new camera
@@ -94,9 +95,7 @@ export default function CameraList({
             type="text"
             placeholder="e.g. backyard"
             value={form.id}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, id: e.target.value }))
-            }
+            onChange={(e) => setForm((f) => ({ ...f, id: e.target.value }))}
             required
           />
         </div>
@@ -107,18 +106,12 @@ export default function CameraList({
             type="text"
             placeholder="rtsp://... or device://0"
             value={form.url}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, url: e.target.value }))
-            }
+            onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
             required
           />
         </div>
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={loading}
-        >
-          {loading ? "Registering..." : "Register camera"}
+        <button type="submit" className="btn btn-primary" disabled={loading}>
+          {loading ? 'Registering...' : 'Register camera'}
         </button>
       </form>
 
@@ -133,7 +126,7 @@ export default function CameraList({
               <th>Status</th>
               <th>Recordings</th>
               <th>Last seen</th>
-              <th style={{ textAlign: "right" }}>Actions</th>
+              <th style={{ textAlign: 'right' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -145,10 +138,7 @@ export default function CameraList({
                     <Link href={`/cameras/${cam.id}`} className="link">
                       {cam.id}
                     </Link>
-                    <div
-                      className="card-meta"
-                      style={{ marginTop: "0.25rem" }}
-                    >
+                    <div className="card-meta" style={{ marginTop: '0.25rem' }}>
                       {cam.url}
                     </div>
                   </td>
@@ -163,10 +153,11 @@ export default function CameraList({
                   <td>
                     {status?.last_seen
                       ? new Date(status.last_seen).toLocaleString()
-                      : "—"}
+                      : '—'}
                   </td>
-                  <td style={{ textAlign: "right" }}>
+                  <td style={{ textAlign: 'right' }}>
                     <button
+                      type="button"
                       className="btn btn-danger btn-sm"
                       onClick={() => handleDelete(cam.id)}
                     >
