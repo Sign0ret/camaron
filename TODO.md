@@ -16,16 +16,35 @@
 - Only ~2 packets per second are decoded per camera (1 keyframe to keep decoder state valid + 1 sampled frame) instead of the full source framerate.
 - Cuts per-camera CPU usage by roughly **10–15×**.
 
+### Docker resource limits (Tier 1.1)
+- Added `cpus: "1.5"` and `mem_limit: "3g"` to the inference container in `docker-compose.prod.yml`.
+- Prevents runaway CPU or RAM from starving the OS, orchestrator, or MediaMTX.
+
+### Inference healthcheck (Tier 1.2)
+- Added a lightweight HTTP server on port `8081` in `services/inference/main.py`.
+- Added Docker `healthcheck` in `docker-compose.prod.yml` using `wget`.
+- Docker can now auto-restart a hung or deadlocked inference worker.
+
+### Stagger chunk flush windows (Tier 1.3)
+- Added per-camera random jitter (`random.uniform(0, 1.5)`) to `Mp4Chunker.chunk_sec`.
+- Prevents thundering herd where all cameras encode + upload simultaneously every 5 seconds.
+- Spreads CPU spikes across time, improving stability under load.
+
+### Retry failed R2 uploads (Tier 1.4)
+- Replaced single-attempt upload with 3-attempt retry loop using exponential backoff (`time.sleep(2, 4)`).
+- `time.sleep()` yields CPU to other threads during backoff, so retries don't burn cycles.
+- Prevents permanent recording loss on transient network hiccups.
+
 ---
 
 ## 🟢 Tier 1: Reliability
 
-| # | Task | Why |
-|---|------|-----|
-| 1.1 | **Add Docker resource limits** (`cpus`, `memory`) to the inference container in `docker-compose.prod.yml`. | Prevents runaway CPU or RAM usage from starving the OS / orchestrator / MediaMTX. |
-| 1.2 | **Add a healthcheck to the inference container.** | Docker has no visibility today into whether the worker is healthy or deadlocked. A simple check would enable auto-restart. |
-| 1.3 | **Stagger chunk flush windows** — add a small per-camera random jitter to `chunk_sec`. | All cameras currently flush every 5 seconds simultaneously (thundering herd), causing CPU spikes and serial encode/upload bottlenecks. |
-| 1.4 | **Retry failed R2 uploads.** | `_upload_mp4_to_r2` currently logs and gives up. A transient network hiccup means a lost recording permanently. |
+| # | Task | Why | Status |
+|---|---|------|--------|
+| ~~1.1~~ | ~~Add Docker resource limits (`cpus`, `memory`) to the inference container.~~ | ~~Prevents runaway CPU or RAM usage from starving the OS / orchestrator / MediaMTX.~~ | ✅ Done |
+| ~~1.2~~ | ~~Add a healthcheck to the inference container.~~ | ~~Docker can now auto-restart a hung or deadlocked worker.~~ | ✅ Done |
+| ~~1.3~~ | ~~Stagger chunk flush windows — add a small per-camera random jitter to `chunk_sec`.~~ | ~~Prevents thundering herd where all cameras encode/upload simultaneously every 5 seconds.~~ | ✅ Done |
+| ~~1.4~~ | ~~Retry failed R2 uploads with exponential backoff.~~ | ~~Prevents permanent recording loss on transient network hiccups.~~ | ✅ Done |
 
 ---
 
