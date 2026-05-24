@@ -63,16 +63,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_TOKEN }}
+      - name: Set lowercase repo owner
+        id: vars
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER@L}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
           context: services/orchestrator
           push: ${{ github.event_name == 'push' }}
-          tags: ghcr.io/${{ github.repository_owner }}/camaron-orchestrator:latest
+          tags: ghcr.io/${{ steps.vars.outputs.owner }}/camaron-orchestrator:latest
       - uses: docker/build-push-action@v6
         with:
           context: services/inference
           push: ${{ github.event_name == 'push' }}
-          tags: ghcr.io/${{ github.repository_owner }}/camaron-inference:latest
+          tags: ghcr.io/${{ steps.vars.outputs.owner }}/camaron-inference:latest
 
   deploy-vps:
     needs: [docker, changes]
