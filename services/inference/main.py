@@ -7,7 +7,6 @@ import signal
 import time
 import threading
 from datetime import datetime
-from fractions import Fraction
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Thread pool for offloading MP4 encode+upload so the RTSP reader never blocks.
@@ -20,12 +19,19 @@ import numpy as np
 from PIL import Image
 import requests
 
+from inference import YOLOInferencePipeline
+from tracker import EventTracker
+from models import Event
+
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8080")
 ORCHESTRATOR_API_KEY = os.getenv("ORCHESTRATOR_API_KEY", "")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "10"))
-SAMPLE_INTERVAL = float(os.getenv("SAMPLE_INTERVAL", "1.0"))
 
-# Trigger CI rebuild after workflow filter fix
+# Decoupled sampling rates:
+#  - INFERENCE_INTERVAL: how often we decode + run YOLO (5 fps)
+#  - CHUNK_INTERVAL: how often we buffer a frame into the MP4 chunker (1 fps)
+INFERENCE_INTERVAL = float(os.getenv("INFERENCE_INTERVAL", "0.2"))   # 5 fps
+CHUNK_INTERVAL = float(os.getenv("CHUNK_INTERVAL", "1.0"))           # 1 fps for MP4
 
 # ── Cloudflare R2 config ───────────────────────────────
 R2_BUCKET = os.getenv("R2_BUCKET_NAME")
@@ -36,11 +42,19 @@ R2_ENDPOINT = os.getenv("R2_ENDPOINT_URL")
 _r2_client = None
 _turso_available = False
 
-try:
-    from turso import record_upload as _turso_record_upload, set_online as _turso_set_online
+_try_imports = {}
+
+def _try_import(name, fromlist):
+    try:
+        mod = __import__(name, fromlist=fromlist)
+        return tuple(getattr(mod, attr) for attr in fromlist)
+    except Exception:
+        return None
+
+_turso_mod = _try_import("turso", ["record_upload", "set_online", "log_event"])
+if _turso_mod:
+    _turso_record_upload, _turso_set_online, _turso_log_event = _turso_mod
     _turso_available = True
-except Exception:
-    pass
 
 
 def get_r2_client():
@@ -125,12 +139,13 @@ def open_input(url: str, resolution: str = "640x480"):
 class Mp4Chunker:
     """Buffers decoded frames in memory and flushes a 5-second MP4 to R2."""
 
-    def __init__(self, camera_id: str, chunk_sec: float = 5.0):
+    def __init__(self, camera_id: str, chunk_sec: float = 5.0, fps: int = 1):
         self.camera_id = camera_id
         # Stagger flush windows per camera to avoid thundering herd.
         # A 1.5-second jitter spreads encode/upload load across time.
         jitter = random.uniform(0, 1.5)
         self.chunk_sec = chunk_sec + jitter
+        self.fps = fps
         self._buffer: list[tuple[datetime, np.ndarray]] = []
         self._chunk_start_ts: float | None = None
         self._lock = threading.Lock()
@@ -196,7 +211,7 @@ class Mp4Chunker:
         ts_str = frames[0][0].strftime("%Y%m%d_%H%M%S")
         tmp_path = f"/tmp/chunk_{self.camera_id}_{ts_str}.mp4"
 
-        fps = round(1.0 / SAMPLE_INTERVAL)
+        fps = self.fps
         width = frames[0][1].shape[1]
         height = frames[0][1].shape[0]
 
@@ -255,7 +270,11 @@ class StreamWorker(threading.Thread):
         self._stop_event = threading.Event()
         self._container = None
         self._lock = threading.Lock()
-        self._chunker = Mp4Chunker(camera_id)
+        self._chunker = Mp4Chunker(camera_id, fps=int(round(1.0 / CHUNK_INTERVAL)))
+        # Inference & tracking are per-worker so ByteTrack state stays isolated per camera.
+        self.inference_pipeline: YOLOInferencePipeline | None = None
+        self.tracker: EventTracker | None = None
+        self.rules_path = os.getenv("CAMERA_RULES_PATH", "camera_rules.json")
 
     def stop(self):
         """Signal the worker to stop and force-unblock any I/O."""
@@ -281,7 +300,22 @@ class StreamWorker(threading.Thread):
                 with self._lock:
                     self._container = container
                 stream = container.streams.video[0]
-                last_sample_time = 0.0
+
+                last_inference_time = 0.0
+                last_chunk_time = 0.0
+
+                # Lazy-init inference & tracker once per camera lifecycle.
+                # NOTE: each camera loads its own YOLO model instance for now.
+                # Future: share a single model across workers via a GPU queue.
+                if self.inference_pipeline is None:
+                    print(f"{log_prefix} initializing inference pipeline...")
+                    self.inference_pipeline = YOLOInferencePipeline(
+                        model_path=os.getenv("YOLO_MODEL", "yolov8n.pt"),
+                        device=os.getenv("YOLO_DEVICE", "cpu"),
+                    )
+                    self.tracker = EventTracker(rules_path=self.rules_path)
+                    print(f"{log_prefix} inference pipeline ready.")
+
                 print(f"{log_prefix} connected to {self.url}")
                 _report_status(self.camera_id, "connected")
                 _log_to_turso(self.camera_id, "", "connected")
@@ -293,9 +327,9 @@ class StreamWorker(threading.Thread):
 
                         now = time.time()
 
-                        # Skip decoding most packets when not ready to sample.
+                        # Skip decoding most packets when not ready to sample for inference.
                         # We still decode keyframes to keep the decoder's reference frames valid.
-                        if now - last_sample_time < SAMPLE_INTERVAL:
+                        if now - last_inference_time < INFERENCE_INTERVAL:
                             if packet.is_keyframe:
                                 try:
                                     for _ in packet.decode():
@@ -310,15 +344,21 @@ class StreamWorker(threading.Thread):
 
                             arr = frame.to_ndarray(format="rgb24")
 
-                            # ═══════════════════════════════════════════════════
-                            # TODO: Inference Pipeline (YOLO + ByteTrack + Turso)
+                            # ── Inference + Tracking ─────────────────────────
+                            results = self.inference_pipeline.process_frame(arr)
+                            events = self.tracker.process_detections(
+                                self.camera_id, results, arr.shape
+                            )
+                            self._log_events(events)
                             # ───────────────────────────────────────────────────
-                            annotated_arr = arr  # placeholder
-                            # ═══════════════════════════════════════════════════
 
-                            ts = datetime.utcnow()
-                            self._chunker.add_frame(ts, annotated_arr)
-                            last_sample_time = now
+                            # Buffer raw frames to MP4 chunker at 1 fps
+                            if now - last_chunk_time >= CHUNK_INTERVAL:
+                                ts = datetime.utcnow()
+                                self._chunker.add_frame(ts, arr)
+                                last_chunk_time = now
+
+                            last_inference_time = now
                             break
 
                 finally:
@@ -341,6 +381,18 @@ class StreamWorker(threading.Thread):
 
         # final flush on thread exit
         self._chunker.stop()
+
+    def _log_events(self, events: list[Event]):
+        for event in events:
+            print(
+                f"[{self.camera_id}] EVENT: {event.event_type} "
+                f"track={event.track_id} meta={event.metadata}"
+            )
+            if _turso_available:
+                try:
+                    _turso_log_event(event)
+                except Exception as e:
+                    print(f"[{self.camera_id}] failed to log event to Turso: {e}")
 
 
 class _HealthHandler(BaseHTTPRequestHandler):

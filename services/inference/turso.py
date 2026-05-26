@@ -52,6 +52,18 @@ def migrate():
 
     CREATE INDEX IF NOT EXISTS idx_recordings_camera ON recordings(camera_id);
     CREATE INDEX IF NOT EXISTS idx_recordings_time ON recordings(recorded_at);
+
+    CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,
+        camera_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        metadata TEXT,
+        track_id INTEGER,
+        FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_camera ON events(camera_id);
+    CREATE INDEX IF NOT EXISTS idx_events_time ON events(timestamp);
     """
     conn.executescript(schema)
     conn.commit()
@@ -182,3 +194,29 @@ def list_recordings(camera_id: str, limit: int = 50) -> list[dict]:
     return [
         {"id": r[0], "filename": r[1], "recorded_at": r[2]} for r in rows
     ]
+
+
+def log_event(event) -> None:
+    """Persist a tracker event to the events table."""
+    import json as _json
+
+    now = event.timestamp.isoformat() if event.timestamp else datetime.now(timezone.utc).isoformat()
+    conn = _get_connection()
+    conn.execute(
+        """
+        INSERT INTO events (id, camera_id, event_type, timestamp, metadata, track_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            metadata = excluded.metadata
+        """,
+        (
+            event.id,
+            event.camera_id,
+            event.event_type,
+            now,
+            _json.dumps(event.metadata) if event.metadata else "{}",
+            event.track_id,
+        ),
+    )
+    conn.commit()
+    conn.close()

@@ -1,0 +1,29 @@
+{
+  "testcam": {
+    "lines": [
+      {
+        "id": "door_line",
+        "name": "Front Door Line",
+        "start": { "x": 100, "y": 200 },
+        "end": { "x": 400, "y": 200 }
+      }
+    ],
+    "zones": [
+      {
+        "id": "restricted",
+        "name": "Restricted Area",
+        "polygon": [
+          { "x": 50, "y": 50 },
+          { "x": 200, "y": 50 },
+          { "x": 200, "y": 150 },
+          { "x": 50, "y": 150 }
+        ]
+      }
+    ],
+    "after_hours": {
+      "start": "22:00",
+      "end": "06:00"
+    },
+    "monitored_classes": ["person"]
+  }
+}

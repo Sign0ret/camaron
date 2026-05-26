@@ -3,4 +3,5 @@ boto3==1.34.0
 numpy==1.26.4
 requests==2.31.0
 Pillow==10.3.0
+ultralytics==8.2.0
 # trigger ci rebuild

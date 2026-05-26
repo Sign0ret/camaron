@@ -27,3 +27,15 @@ CREATE TABLE IF NOT EXISTS recordings (
 
 CREATE INDEX IF NOT EXISTS idx_recordings_camera ON recordings(camera_id);
 CREATE INDEX IF NOT EXISTS idx_recordings_time ON recordings(recorded_at);
+
+CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    camera_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    metadata TEXT,
+    track_id INTEGER,
+    FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_events_camera ON events(camera_id);
+CREATE INDEX IF NOT EXISTS idx_events_time ON events(timestamp);
