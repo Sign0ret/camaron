@@ -1,7 +1,7 @@
 """
 ByteTrack object tracker.
 Pure Python/numpy implementation of the BYTE tracking algorithm.
-Uses a Kalman filter for motion prediction and the Hungarian algorithm (via lap)
+Uses a Kalman filter for motion prediction and the Hungarian algorithm (via scipy)
 for optimal track-to-detection assignment.
 """
 
@@ -50,20 +50,17 @@ def _iou_batch(bboxes1: np.ndarray, bboxes2: np.ndarray) -> np.ndarray:
 
 
 def _linear_assignment(cost_matrix: np.ndarray) -> np.ndarray:
-    """Solve linear assignment using the Hungarian algorithm via lap."""
+    """Solve linear assignment using the Hungarian algorithm via scipy."""
     try:
-        import lap  # type: ignore
+        from scipy.optimize import linear_sum_assignment
     except ImportError:
-        raise RuntimeError("lap is not installed. Install it: pip install lap")
+        raise RuntimeError(
+            "scipy is not installed. Install it: pip install scipy"
+        )
 
-    _, x, _ = lap.lapjv(cost_matrix, extend_cost=True)
-    matches = []
-    n_rows, n_cols = cost_matrix.shape
-    for i in range(n_rows):
-        j = int(x[i])
-        if 0 <= j < n_cols:
-            matches.append([i, j])
-    return np.array(matches)
+    # linear_sum_assignment minimizes cost, so it works directly on our cost matrix
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    return np.column_stack([row_ind, col_ind])
 
 
 # ── Kalman Filter ────────────────────────────────────────────────────

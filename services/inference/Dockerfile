@@ -5,12 +5,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libavformat-dev libavcodec-dev libavdevice-dev \
     libavutil-dev libswscale-dev libswresample-dev \
-    pkg-config gcc g++ build-essential python3-dev wget \
+    pkg-config gcc wget \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# Pre-install numpy so lap can access headers during compilation
-RUN pip install --no-cache-dir numpy==1.26.4 wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy ONNX model and source code
