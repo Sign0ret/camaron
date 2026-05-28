@@ -20,6 +20,7 @@ from PIL import Image
 import requests
 
 from inference import YOLOInferencePipeline
+from bytetrack import ByteTrack
 from tracker import EventTracker
 from models import Event
 
@@ -271,8 +272,9 @@ class StreamWorker(threading.Thread):
         self._container = None
         self._lock = threading.Lock()
         self._chunker = Mp4Chunker(camera_id, fps=int(round(1.0 / CHUNK_INTERVAL)))
-        # Inference & tracking are per-worker so ByteTrack state stays isolated per camera.
+        # Inference & tracking are per-worker so tracker state stays isolated per camera.
         self.inference_pipeline: YOLOInferencePipeline | None = None
+        self.byte_tracker: ByteTrack | None = None
         self.tracker: EventTracker | None = None
         self.rules_path = os.getenv("CAMERA_RULES_PATH", "camera_rules.json")
 
@@ -310,9 +312,10 @@ class StreamWorker(threading.Thread):
                 if self.inference_pipeline is None:
                     print(f"{log_prefix} initializing inference pipeline...")
                     self.inference_pipeline = YOLOInferencePipeline(
-                        model_path=os.getenv("YOLO_MODEL", "yolov8n.pt"),
-                        device=os.getenv("YOLO_DEVICE", "cpu"),
+                        model_path=os.getenv("YOLO_MODEL", "models/yolov8n.onnx"),
+                        confidence=float(os.getenv("YOLO_CONFIDENCE", "0.3")),
                     )
+                    self.byte_tracker = ByteTrack()
                     self.tracker = EventTracker(rules_path=self.rules_path)
                     print(f"{log_prefix} inference pipeline ready.")
 
@@ -346,8 +349,9 @@ class StreamWorker(threading.Thread):
 
                             # ── Inference + Tracking ─────────────────────────
                             results = self.inference_pipeline.process_frame(arr)
+                            tracked_results = self.byte_tracker.update(results)
                             events = self.tracker.process_detections(
-                                self.camera_id, results, arr.shape
+                                self.camera_id, tracked_results, arr.shape
                             )
                             self._log_events(events)
                             # ───────────────────────────────────────────────────
