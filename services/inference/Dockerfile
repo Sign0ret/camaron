@@ -5,7 +5,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libavformat-dev libavcodec-dev libavdevice-dev \
     libavutil-dev libswscale-dev libswresample-dev \
-    pkg-config gcc g++ wget \
+    pkg-config gcc g++ build-essential python3-dev wget \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
