@@ -69,7 +69,6 @@ CREATE TABLE IF NOT EXISTS cameras (
     resolution TEXT DEFAULT '640x480',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-ALTER TABLE cameras ADD COLUMN resolution TEXT DEFAULT '640x480';
 
 CREATE TABLE IF NOT EXISTS camera_status (
     camera_id TEXT PRIMARY KEY,
