@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+# Pre-install numpy so lap can access headers during compilation
+RUN pip install --no-cache-dir numpy==1.26.4 wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy ONNX model and source code
